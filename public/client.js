@@ -241,28 +241,78 @@
   // The opening cinematic. In a game the server holds the night frozen until
   // every player's video has ended or been skipped, so buffering never cuts it
   // short. `standalone` replays it from the lobby.
+  // Preload the intro as soon as the page opens and keep it in Cache Storage,
+  // so the cinematic plays from a local copy (no buffering, no refetch on the
+  // next visit). Falls back to the streaming <source> tags if anything fails.
+  const VIDEO_CACHE = 'nightfall-media-v1';
+  async function preloadVideo() {
+    const v = $('#cinematic-video');
+    // ask about the exact codecs: open-source Chromium says "maybe" to bare mp4 but cannot decode H.264
+    const mp4 = v.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"'), webm = v.canPlayType('video/webm; codecs="vp9, opus"');
+    const url = mp4 === 'probably' ? 'assets/video/intro.mp4' : webm ? 'assets/video/intro.webm' : mp4 ? 'assets/video/intro.mp4' : null;
+    if (!url) return;
+    try {
+      let res = null;
+      const cache = window.caches ? await caches.open(VIDEO_CACHE).catch(() => null) : null;
+      if (cache) res = await cache.match(url);
+      if (!res) {
+        res = await fetch(url);
+        if (!res.ok) throw new Error(`video ${res.status}`);
+        if (cache) { try { await cache.put(url, res.clone()); } catch (e) { /* quota: fine, play from memory */ } }
+      }
+      const blob = await res.blob();
+      S.videoBlobUrl = URL.createObjectURL(blob);
+      // swap the source only while the cinematic is not playing; the element resets, so it must be primed again
+      const swap = () => { if (!$('#cinematic').classList.contains('hidden')) return false; v.src = S.videoBlobUrl; v.load(); videoPrimed = false; return true; };
+      if (!swap()) { const t = setInterval(() => { if (swap()) clearInterval(t); }, 1000); }
+      S.videoReady = true;
+    } catch (e) { console.warn('[video] preload skipped:', e.message); }
+  }
+  preloadVideo();
+
+  // iOS (especially in Low Power Mode) only lets a video start inside a real
+  // tap. The server's "start" arrives later, outside any tap, so we unlock the
+  // element during the player's own taps in the lobby: a muted play+pause.
+  let videoPrimed = false;
+  function primeVideo() {
+    if (videoPrimed) return;
+    const v = $('#cinematic-video');
+    if (!$('#cinematic').classList.contains('hidden')) return; // already playing for real
+    try {
+      v.muted = true;
+      const p = v.play();
+      if (p && p.then) p.then(() => { videoPrimed = true; v.pause(); try { v.currentTime = 0; } catch (e) { /* not seekable yet */ } }).catch(() => { /* blocked: the tap-to-play button covers this case */ });
+    } catch (e) { /* ignore */ }
+  }
+  for (const ev of ['touchend', 'click']) document.addEventListener(ev, primeVideo, { capture: true, passive: true });
+
   function playCinematic(standalone) {
-    const box = $('#cinematic'), v = $('#cinematic-video'), loading = $('#cinematic-loading');
-    let done = false;
+    const box = $('#cinematic'), v = $('#cinematic-video'), loading = $('#cinematic-loading'), tap = $('#btn-play-intro');
+    let done = false, started = false;
     const finish = () => {
       if (done) return; done = true;
       try { v.pause(); } catch (e) { /* ignore */ }
-      box.classList.add('hidden'); loading.classList.add('hidden');
+      box.classList.add('hidden'); loading.classList.add('hidden'); tap.classList.add('hidden');
+      clearTimeout(playCinematic.w);
       v.onended = v.onerror = v.onwaiting = v.onplaying = null;
       if (standalone) { Audio.startMusic(); return; }
       send({ t: 'ready' });
       if (S.game) { $('#intro').classList.remove('hidden'); Audio.startMusic(); }
     };
-    box.classList.remove('hidden');
+    box.classList.remove('hidden'); tap.classList.add('hidden');
     loading.classList.toggle('hidden', v.readyState >= 3);
     try { v.currentTime = 0; } catch (e) { /* not loaded yet */ }
     v.muted = S.muted; v.volume = 0.9;
     v.onended = finish; v.onerror = finish;
     v.onwaiting = () => loading.classList.remove('hidden');
-    v.onplaying = () => loading.classList.add('hidden');
+    v.onplaying = () => { started = true; loading.classList.add('hidden'); tap.classList.add('hidden'); };
     $('#btn-skip').onclick = finish;
+    // If playback has not started shortly, or the browser refused, offer a real tap.
+    const offerTap = () => { if (done || started) return; loading.classList.add('hidden'); tap.classList.remove('hidden'); };
+    tap.onclick = () => { v.muted = S.muted; const p2 = v.play(); if (p2 && p2.catch) p2.catch(() => { v.muted = true; v.play().catch(finish); }); tap.classList.add('hidden'); };
     const p = v.play();
-    if (p && p.catch) p.catch(() => { v.muted = true; v.play().catch(finish); }); // autoplay with sound refused: play muted
+    if (p && p.catch) p.catch(offerTap);
+    clearTimeout(playCinematic.w); playCinematic.w = setTimeout(offerTap, 2500);
     if (standalone) return;
     // stop waiting if the game ends underneath us (everyone left, etc.)
     clearInterval(playCinematic.t); playCinematic.t = setInterval(() => { if (!S.game) finish(); if (done) clearInterval(playCinematic.t); }, 500);

@@ -75,6 +75,7 @@ td.won { color: var(--green); } td.lost { color: var(--blood); }
 .loading { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--dim); letter-spacing: .2em; text-transform: uppercase; font-size: 13px; animation: pulse 1.6s infinite; }
 .ghost-btn { margin-top: 12px; background: transparent; border-color: rgba(242,140,40,.35); color: var(--accent); font-size: 13px; }
 .cinematic video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.play-intro { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 20px; padding: 16px 28px; background: rgba(163,18,26,.85); border-color: #d96a2a; color: #fff; box-shadow: 0 0 40px rgba(163,18,26,.6); }
 .skip { position: absolute; right: 20px; bottom: 20px; background: rgba(0,0,0,.6); border-color: rgba(255,255,255,.3); color: #ddd; opacity: .7; }
 .skip:hover { opacity: 1; }
 .warm { color: var(--accent); letter-spacing: .15em; text-transform: uppercase; font-size: 13px; min-height: 18px; }
