@@ -27,6 +27,17 @@ suffixes `_s _e _n _w`; the game falls back to `_s`, then to the bare key.
 Anything missing from the manifest keeps the built-in procedural fallback,
 so files can be replaced one at a time.
 
+## Video (`video/`)
+
+| file | use |
+|---|---|
+| `intro.webm` | opening cinematic (VP9 + Opus), played once per room with sound |
+| `intro.mp4` | same cinematic (H.264 + AAC) for browsers without VP9, such as Safari |
+| `intro-muted.webm` | silent loop behind the lobby |
+
+The server freezes the night for `INTRO_SECONDS` + 2 (in `server/index.js`)
+while the cinematic plays; update that constant if the video length changes.
+
 ## Audio
 
 No audio files are included yet: every sound is synthesized. To add real

@@ -147,23 +147,45 @@
     S.game.doorMap = new Map(init.doors.map((d) => [d.y * init.W + d.x, d]));
     $('#lobby').classList.add('hidden'); $('#game').classList.remove('hidden');
     $('#end').classList.add('hidden'); $('#puzzle').classList.add('hidden');
+    try { $('#lobby-video').pause(); } catch (e) { /* no video */ }
     $('#hud-level-name').textContent = `Night ${init.level} · ${init.name}`;
     $('#hud-difficulty').textContent = init.difficulty;
     $('#hud-log').innerHTML = '';
     $('#intro-title').textContent = init.name;
     $('#intro-text').textContent = init.intro;
     $('#intro-roster').textContent = `Tonight: ${init.monsters.join(', ')}. ${init.keys} locked door${init.keys > 1 ? 's' : ''}, ${init.fragments} rune fragments.`;
-    $('#intro').classList.remove('hidden');
+    $('#intro-warm').textContent = '';
     $('#touch').classList.toggle('hidden', !('ontouchstart' in window));
     resize();
-    Audio.init(); Audio.resume(); Audio.startMusic();
+    Audio.init(); Audio.resume();
+    if (init.cinematic) playCinematic(); else { $('#intro').classList.remove('hidden'); Audio.startMusic(); }
     if (!S.raf) loop(performance.now());
   }
   $('#btn-intro-ok').onclick = () => { $('#intro').classList.add('hidden'); Audio.resume(); };
 
+  // The opening cinematic: plays once per room while the server holds the night frozen.
+  function playCinematic() {
+    const box = $('#cinematic'), v = $('#cinematic-video');
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      try { v.pause(); } catch (e) { /* ignore */ }
+      box.classList.add('hidden');
+      if (S.game) { $('#intro').classList.remove('hidden'); Audio.startMusic(); }
+    };
+    box.classList.remove('hidden');
+    v.currentTime = 0; v.muted = S.muted; v.volume = 0.9;
+    v.onended = finish; v.onerror = finish;
+    $('#btn-skip').onclick = finish;
+    const p = v.play();
+    if (p && p.catch) p.catch(() => { v.muted = true; v.play().catch(finish); }); // autoplay with sound refused: play muted
+    clearTimeout(playCinematic.t); playCinematic.t = setTimeout(finish, 20000); // never trap the player
+  }
+
   function leaveGameUI() {
     S.game = null; S.snap = null;
     Audio.stopMusic();
+    $('#cinematic').classList.add('hidden'); try { $('#cinematic-video').pause(); $('#lobby-video').play(); } catch (e) { /* ignore */ }
     $('#game').classList.add('hidden'); $('#lobby').classList.remove('hidden');
     $('#game').classList.remove('shake');
     renderRoom();
@@ -252,7 +274,10 @@
     else if (remaining > 0) obj = `Find the rune fragments (${s.got.length}/${g.fragments}). ${S.hideOrder ? 'Remember the order they were marked.' : ''} Keys open the locked doors.`;
     else obj = 'Every fragment is found. Read the altar.';
     $('#hud-objective').textContent = obj;
-    const escEl = $('#hud-escape'); escEl.classList.toggle('hidden', s.esc === null); if (s.esc !== null) escEl.textContent = `THE DOOR CLOSES IN ${s.esc}`;
+    const escEl = $('#hud-escape');
+    if (s.warm > 0) { escEl.classList.remove('hidden'); escEl.textContent = `THE NIGHT BEGINS IN ${s.warm}`; }
+    else { escEl.classList.toggle('hidden', s.esc === null); if (s.esc !== null) escEl.textContent = `THE DOOR CLOSES IN ${s.esc}`; }
+    $('#intro-warm').textContent = s.warm > 0 ? `The night begins in ${s.warm}` : 'The night has begun';
     S.nearAltar = !!(m && !m.down && !m.esc && remaining === 0 && !s.solved && Math.hypot(m.x - g.altar.x - 0.5, m.y - g.altar.y - 0.5) < 1.6);
     const prompt = $('#hud-prompt'); prompt.classList.toggle('hidden', !S.nearAltar || !$('#puzzle').classList.contains('hidden'));
     prompt.textContent = 'Press E (or tap E) to read the altar';
@@ -297,7 +322,7 @@
   });
   window.addEventListener('keyup', (e) => { S.keys[e.code] = false; });
   window.addEventListener('blur', () => { S.keys = {}; });
-  function toggleMute() { S.muted = !S.muted; Audio.setMuted(S.muted); $('#btn-mute').textContent = S.muted ? '🔇' : '🔊'; }
+  function toggleMute() { S.muted = !S.muted; Audio.setMuted(S.muted); try { $('#cinematic-video').muted = S.muted; } catch (e) { /* ignore */ } $('#btn-mute').textContent = S.muted ? '🔇' : '🔊'; }
   $('#btn-mute').onclick = toggleMute;
 
   // touch joystick
