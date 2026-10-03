@@ -21,6 +21,7 @@
     <header class="title">
       <h1>NIGHTFALL</h1>
       <p class="tagline">They cannot be fought. Only outrun.</p>
+      <button id="btn-watch-intro" class="ghost-btn">▶ Watch the intro</button>
     </header>
 
     <div class="lobby-grid">
@@ -95,14 +96,6 @@
       <button id="btn-act" class="act">E</button>
     </div>
 
-    <div id="cinematic" class="cinematic hidden">
-      <video id="cinematic-video" playsinline preload="auto">
-        <source src="assets/video/intro.webm" type="video/webm">
-        <source src="assets/video/intro.mp4" type="video/mp4">
-      </video>
-      <button id="btn-skip" class="skip">Skip ▸</button>
-    </div>
-
     <div id="intro" class="overlay hidden">
       <div class="card">
         <h2 id="intro-title"></h2>
@@ -141,6 +134,14 @@
     <div id="scare" class="scare hidden"><canvas id="scare-canvas"></canvas></div>
     <div id="vignette"></div>
   </section>
+</div>
+<div id="cinematic" class="cinematic hidden">
+  <video id="cinematic-video" playsinline preload="auto">
+    <source src="assets/video/intro.webm" type="video/webm">
+    <source src="assets/video/intro.mp4" type="video/mp4">
+  </video>
+  <div id="cinematic-loading" class="loading hidden">Loading the night…</div>
+  <button id="btn-skip" class="skip">Skip ▸</button>
 </div>
 <script src="assets.js"></script>
 <script src="audio.js"></script>

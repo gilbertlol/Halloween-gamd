@@ -13,7 +13,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
 const MAX_PLAYERS = 6;
 const SNAPSHOT_EVERY = 2; // ticks -> 15 snapshots/s
-const INTRO_SECONDS = 15; // length of assets/video/intro.webm
+const INTRO_MAX_SECONDS = 120; // safety limit for the cinematic hold if a client never reports ready
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'audio/ogg', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
 
@@ -84,7 +84,7 @@ class Room {
     const intro = !this.introShown;
     this.introShown = true;
     try {
-      this.game = new Game(level, roster, (type, payload) => this.onGameEmit(type, payload), { intro, warmup: intro ? INTRO_SECONDS + 2 : 4 });
+      this.game = new Game(level, roster, (type, payload) => this.onGameEmit(type, payload), { intro, warmup: intro ? INTRO_MAX_SECONDS : 4 });
     } catch (e) {
       console.error('[room] failed to start game', e);
       return this.broadcast({ t: 'error', msg: 'The map refused to be born. Try again.' });
@@ -236,6 +236,11 @@ function handle(c, msg) {
     case 'start': {
       const r = c.room; if (!r || r.hostId !== c.id || r.game) return;
       r.start();
+      break;
+    }
+    case 'ready': { // the client's cinematic ended or was skipped
+      const r = c.room; if (!r || !r.game) return;
+      r.game.markReady(c.id);
       break;
     }
     case 'input': {

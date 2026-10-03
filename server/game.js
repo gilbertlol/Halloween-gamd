@@ -17,6 +17,9 @@ class Game {
     // warm-up: the night is frozen (no movement, no clock) while the intro plays
     this.warmup = Number(opts.warmup) || 0;
     this.intro = !!opts.intro;
+    // players still watching the cinematic; the warm-up collapses to a short
+    // countdown once everyone is done (or when the safety limit runs out)
+    this.awaiting = new Set(this.intro ? roomPlayers.map((p) => p.id) : []);
     this.cfg = LEVELS[level - 1];
     this.emit = emit; // (type, payload) => broadcast to room
     this.seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
@@ -144,8 +147,14 @@ class Game {
     p.dy = Math.max(-1, Math.min(1, Number(dy) || 0));
   }
 
+  markReady(id) {
+    if (!this.awaiting.delete(id)) return;
+    if (this.awaiting.size === 0 && this.warmup > 4) this.warmup = 4;
+  }
+
   removePlayer(id) {
     this.players.delete(id);
+    this.markReady(id);
     if (this.players.size === 0) this.finish(false, 'everyone left');
   }
 
@@ -532,7 +541,7 @@ class Game {
       monsters.push({ id: m.id, t: m.type, x: r2(m.x), y: r2(m.y), dx: m.dx, dy: m.dy, s: m.state, v: seen ? 1 : 0, q: m.silent ? 1 : 0 });
     }
     const snap = {
-      tick: this.tick, time: Math.ceil(this.timeLeft), warm: this.warmup > 0 ? Math.ceil(this.warmup) : 0, players, monsters,
+      tick: this.tick, time: Math.ceil(this.timeLeft), warm: this.warmup > 0 ? Math.ceil(this.warmup) : 0, waitFor: this.warmup > 4 ? this.awaiting.size : 0, players, monsters,
       keys: this.keys.filter((k) => !k.taken).map((k) => ({ id: k.id, x: k.x, y: k.y })),
       frags: this.fragments.filter((f) => !f.taken).map((f) => ({ id: f.id, x: f.x, y: f.y })),
       got: this.fragments.filter((f) => f.taken).map((f) => ({ rune: f.rune, order: f.order })),
