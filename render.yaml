@@ -1,0 +1,19 @@
+# Render Blueprint: one-click deploy of Nightfall on Render's free tier.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: nightfall
+    runtime: node
+    plan: free
+    branch: claude/halloween-escape-game-lvgd0w
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
+    # Free instances have no persistent disk: the leaderboard and relics reset
+    # on every deploy or restart. Upgrade the plan and add a disk mounted at
+    # /var/data (and point DATA_DIR there) to keep them.

@@ -1,0 +1,62 @@
+{
+  "atlases": {
+    "chars":   { "file": "characters.png", "cols": 8, "rows": 8 },
+    "props":   { "file": "props.png",      "cols": 6, "rows": 6 },
+    "terrain": { "file": "terrain.png",    "cols": 6, "rows": 6 },
+    "scares":  { "file": "jumpscares.png", "cols": 2, "rows": 2 }
+  },
+  "sprites": {
+    "player0_s": { "atlas": "chars", "col": 0, "row": 0 }, "player0_e": { "atlas": "chars", "col": 2, "row": 0 }, "player0_n": { "atlas": "chars", "col": 4, "row": 0 }, "player0_w": { "atlas": "chars", "col": 6, "row": 0 },
+    "player1_s": { "atlas": "chars", "col": 0, "row": 1 }, "player1_e": { "atlas": "chars", "col": 2, "row": 1 }, "player1_n": { "atlas": "chars", "col": 4, "row": 1 }, "player1_w": { "atlas": "chars", "col": 6, "row": 1 },
+    "player2_s": { "atlas": "chars", "col": 0, "row": 2 }, "player2_e": { "atlas": "chars", "col": 2, "row": 2 }, "player2_n": { "atlas": "chars", "col": 4, "row": 2 }, "player2_w": { "atlas": "chars", "col": 6, "row": 2 },
+    "ghost_s":   { "atlas": "chars", "col": 0, "row": 3 }, "ghost_e":   { "atlas": "chars", "col": 2, "row": 3 }, "ghost_n":   { "atlas": "chars", "col": 4, "row": 3 }, "ghost_w":   { "atlas": "chars", "col": 6, "row": 3 },
+    "zombie_s":  { "atlas": "chars", "col": 0, "row": 4 }, "zombie_e":  { "atlas": "chars", "col": 2, "row": 4 }, "zombie_n":  { "atlas": "chars", "col": 4, "row": 4 }, "zombie_w":  { "atlas": "chars", "col": 6, "row": 4 },
+    "crawler_s": { "atlas": "chars", "col": 0, "row": 5 }, "crawler_e": { "atlas": "chars", "col": 2, "row": 5 }, "crawler_n": { "atlas": "chars", "col": 4, "row": 5 }, "crawler_w": { "atlas": "chars", "col": 6, "row": 5 },
+    "imp_s":     { "atlas": "chars", "col": 0, "row": 6 }, "imp_e":     { "atlas": "chars", "col": 2, "row": 6 }, "imp_n":     { "atlas": "chars", "col": 4, "row": 6 }, "imp_w":     { "atlas": "chars", "col": 6, "row": 6 },
+    "demon_s":   { "atlas": "chars", "col": 0, "row": 7 }, "demon_e":   { "atlas": "chars", "col": 2, "row": 7 }, "demon_n":   { "atlas": "chars", "col": 4, "row": 7 }, "demon_w":   { "atlas": "chars", "col": 6, "row": 7 },
+
+    "key0": { "atlas": "props", "col": 0, "row": 0 }, "key1": { "atlas": "props", "col": 1, "row": 0 }, "key2": { "atlas": "props", "col": 2, "row": 0 }, "key3": { "atlas": "props", "col": 3, "row": 0 },
+    "door_h": { "atlas": "props", "col": 4, "row": 0 }, "door_h_open": { "atlas": "props", "col": 5, "row": 0 },
+    "door_v": { "atlas": "props", "col": 4, "row": 1 }, "door_v_open": { "atlas": "props", "col": 5, "row": 1 },
+    "gate": { "atlas": "props", "col": 0, "row": 1 }, "gate_open": { "atlas": "props", "col": 1, "row": 1 },
+    "exit_closed": { "atlas": "props", "col": 2, "row": 1 }, "exit_open": { "atlas": "props", "col": 3, "row": 1 },
+    "chest": { "atlas": "props", "col": 0, "row": 2 }, "chest_open": { "atlas": "props", "col": 1, "row": 2 },
+    "scroll": { "atlas": "props", "col": 2, "row": 2 }, "journal": { "atlas": "props", "col": 3, "row": 2 }, "candle": { "atlas": "props", "col": 4, "row": 2 }, "flashlight": { "atlas": "props", "col": 5, "row": 2 },
+    "crystal": { "atlas": "props", "col": 0, "row": 3 }, "fragment": { "atlas": "props", "col": 1, "row": 3 }, "locket": { "atlas": "props", "col": 2, "row": 3 }, "watch": { "atlas": "props", "col": 3, "row": 3 }, "gear": { "atlas": "props", "col": 4, "row": 3 }, "fuse": { "atlas": "props", "col": 5, "row": 3 },
+    "pumpkin": { "atlas": "props", "col": 0, "row": 4 }, "jack": { "atlas": "props", "col": 1, "row": 4 }, "gravestone": { "atlas": "props", "col": 2, "row": 4 }, "coffin": { "atlas": "props", "col": 3, "row": 4 }, "tree": { "atlas": "props", "col": 4, "row": 4 }, "roots": { "atlas": "props", "col": 5, "row": 4 },
+    "altar": { "atlas": "props", "col": 0, "row": 5 }, "altar_lit": { "atlas": "props", "col": 1, "row": 5 },
+    "lever": { "atlas": "props", "col": 2, "row": 5 }, "lever_on": { "atlas": "props", "col": 3, "row": 5 }, "plate": { "atlas": "props", "col": 4, "row": 5 }, "plate_on": { "atlas": "props", "col": 5, "row": 5 },
+
+    "relic_lantern": { "atlas": "props", "col": 5, "row": 2 }, "relic_boots": { "atlas": "props", "col": 0, "row": 2 }, "relic_skeleton": { "atlas": "props", "col": 3, "row": 0 },
+    "relic_amulet": { "atlas": "props", "col": 2, "row": 3 }, "relic_eye": { "atlas": "props", "col": 0, "row": 3 }, "relic_ward": { "atlas": "props", "col": 2, "row": 2 },
+
+    "stone0": { "atlas": "terrain", "col": 0, "row": 0, "trim": false }, "stone1": { "atlas": "terrain", "col": 1, "row": 0, "trim": false }, "stone2": { "atlas": "terrain", "col": 2, "row": 0, "trim": false },
+    "stone3": { "atlas": "terrain", "col": 3, "row": 0, "trim": false }, "stone4": { "atlas": "terrain", "col": 4, "row": 0, "trim": false }, "stone5": { "atlas": "terrain", "col": 5, "row": 0, "trim": false },
+    "grass0": { "atlas": "terrain", "col": 0, "row": 1, "trim": false }, "grass1": { "atlas": "terrain", "col": 1, "row": 1, "trim": false }, "grass2": { "atlas": "terrain", "col": 2, "row": 1, "trim": false },
+    "grass3": { "atlas": "terrain", "col": 3, "row": 1, "trim": false }, "grass4": { "atlas": "terrain", "col": 4, "row": 1, "trim": false }, "grass5": { "atlas": "terrain", "col": 5, "row": 1, "trim": false },
+    "wood0": { "atlas": "terrain", "col": 0, "row": 2, "trim": false }, "wood1": { "atlas": "terrain", "col": 1, "row": 2, "trim": false }, "wood2": { "atlas": "terrain", "col": 2, "row": 2, "trim": false },
+    "wood3": { "atlas": "terrain", "col": 3, "row": 2, "trim": false }, "wood4": { "atlas": "terrain", "col": 4, "row": 2, "trim": false }, "wood5": { "atlas": "terrain", "col": 5, "row": 2, "trim": false },
+    "wall_h": { "atlas": "terrain", "col": 0, "row": 3, "trim": false }, "wall_v": { "atlas": "terrain", "col": 1, "row": 3, "trim": false },
+    "mud": { "atlas": "terrain", "col": 0, "row": 4, "trim": false }, "water": { "atlas": "terrain", "col": 1, "row": 4, "trim": false }, "webs": { "atlas": "terrain", "col": 2, "row": 4, "trim": false },
+    "occult": { "atlas": "terrain", "col": 3, "row": 4, "trim": false }, "moss": { "atlas": "terrain", "col": 4, "row": 4, "trim": false }, "lava": { "atlas": "terrain", "col": 5, "row": 4, "trim": false },
+    "arch": { "atlas": "terrain", "col": 0, "row": 5, "trim": false }, "bones": { "atlas": "terrain", "col": 1, "row": 5, "trim": false }, "sigil": { "atlas": "terrain", "col": 2, "row": 5, "trim": false },
+    "gravel": { "atlas": "terrain", "col": 3, "row": 5, "trim": false }, "veins": { "atlas": "terrain", "col": 4, "row": 5, "trim": false }, "compass": { "atlas": "terrain", "col": 5, "row": 5, "trim": false }
+  },
+  "scares": {
+    "ghost":   { "atlas": "scares", "col": 0, "row": 0, "type": "ghost" },
+    "zombie":  { "atlas": "scares", "col": 1, "row": 0, "type": "zombie" },
+    "crawler": { "atlas": "scares", "col": 0, "row": 1, "type": "crawler" },
+    "demon":   { "atlas": "scares", "col": 1, "row": 1, "type": "demon" }
+  },
+  "themes": {
+    "1": { "floor": ["grass0", "grass1", "grass2", "grass3", "grass4", "grass5"], "accent": ["gravel", "mud"], "accentChance": 0.08, "wall": "wall", "decor": ["gravestone", "gravestone", "pumpkin", "jack", "tree", "roots"], "decorChance": 0.035 },
+    "2": { "floor": ["stone0", "stone1", "stone2", "stone3", "stone4", "stone5"], "accent": ["bones", "moss"], "accentChance": 0.07, "wall": "wall", "decor": ["coffin", "candle", "gravestone"], "decorChance": 0.025 },
+    "3": { "floor": ["wood0", "wood1", "wood2", "wood3", "wood4", "wood5"], "accent": ["webs"], "accentChance": 0.05, "wall": "wall", "decor": ["candle", "journal", "jack"], "decorChance": 0.02 },
+    "4": { "floor": ["stone0", "stone1", "stone2", "stone3", "stone4", "stone5"], "accent": ["bones", "bones", "arch"], "accentChance": 0.12, "wall": "wall", "decor": ["coffin", "coffin", "candle"], "decorChance": 0.025 },
+    "5": { "floor": ["stone0", "stone1", "stone2", "stone3", "stone4", "stone5"], "accent": ["webs", "mud", "water"], "accentChance": 0.1, "wall": "wall", "decor": ["candle", "gear", "journal"], "decorChance": 0.02 },
+    "6": { "floor": ["stone0", "stone1", "stone2", "stone3", "stone4", "stone5"], "accent": ["occult", "sigil", "moss"], "accentChance": 0.12, "wall": "wall", "decor": ["candle", "candle", "coffin"], "decorChance": 0.025 },
+    "7": { "floor": ["stone3", "stone4", "stone5", "veins", "mud"], "accent": ["lava", "veins", "occult"], "accentChance": 0.18, "wall": "wall", "decor": ["roots", "candle"], "decorChance": 0.02 },
+    "8": { "floor": ["veins", "veins", "stone5", "occult"], "accent": ["lava", "lava", "sigil"], "accentChance": 0.25, "wall": "wall", "decor": ["roots", "coffin", "jack"], "decorChance": 0.025 }
+  },
+  "audio": {}
+}

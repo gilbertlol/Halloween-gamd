@@ -1,0 +1,19 @@
+{
+  "name": "gorlak-nightfall",
+  "version": "1.0.0",
+  "description": "Nightfall: a 2D co-op online horror escape game. Outrun the monsters, find the keys, solve the mystery, escape.",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}
