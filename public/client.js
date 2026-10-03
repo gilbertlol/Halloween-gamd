@@ -167,24 +167,36 @@
   }
   $('#btn-intro-ok').onclick = () => { $('#intro').classList.add('hidden'); Audio.resume(); };
 
-  // The opening cinematic: plays once per room while the server holds the night frozen.
-  function playCinematic() {
-    const box = $('#cinematic'), v = $('#cinematic-video');
+  // The opening cinematic. In a game the server holds the night frozen until
+  // every player's video has ended or been skipped, so buffering never cuts it
+  // short. `standalone` replays it from the lobby.
+  function playCinematic(standalone) {
+    const box = $('#cinematic'), v = $('#cinematic-video'), loading = $('#cinematic-loading');
     let done = false;
     const finish = () => {
       if (done) return; done = true;
       try { v.pause(); } catch (e) { /* ignore */ }
-      box.classList.add('hidden');
+      box.classList.add('hidden'); loading.classList.add('hidden');
+      v.onended = v.onerror = v.onwaiting = v.onplaying = null;
+      if (standalone) { Audio.startMusic(); return; }
+      send({ t: 'ready' });
       if (S.game) { $('#intro').classList.remove('hidden'); Audio.startMusic(); }
     };
     box.classList.remove('hidden');
-    v.currentTime = 0; v.muted = S.muted; v.volume = 0.9;
+    loading.classList.toggle('hidden', v.readyState >= 3);
+    try { v.currentTime = 0; } catch (e) { /* not loaded yet */ }
+    v.muted = S.muted; v.volume = 0.9;
     v.onended = finish; v.onerror = finish;
+    v.onwaiting = () => loading.classList.remove('hidden');
+    v.onplaying = () => loading.classList.add('hidden');
     $('#btn-skip').onclick = finish;
     const p = v.play();
     if (p && p.catch) p.catch(() => { v.muted = true; v.play().catch(finish); }); // autoplay with sound refused: play muted
-    clearTimeout(playCinematic.t); playCinematic.t = setTimeout(finish, 20000); // never trap the player
+    if (standalone) return;
+    // stop waiting if the game ends underneath us (everyone left, etc.)
+    clearInterval(playCinematic.t); playCinematic.t = setInterval(() => { if (!S.game) finish(); if (done) clearInterval(playCinematic.t); }, 500);
   }
+  $('#btn-watch-intro').onclick = () => { Audio.init(); Audio.resume(); Audio.stopMusic(); playCinematic(true); };
 
   function leaveGameUI() {
     S.game = null; S.snap = null;
@@ -279,9 +291,10 @@
     else obj = 'Every fragment is found. Read the altar.';
     $('#hud-objective').textContent = obj;
     const escEl = $('#hud-escape');
-    if (s.warm > 0) { escEl.classList.remove('hidden'); escEl.textContent = `THE NIGHT BEGINS IN ${s.warm}`; }
+    if (s.waitFor > 0) { escEl.classList.remove('hidden'); escEl.textContent = `WAITING FOR ${s.waitFor} TO FINISH THE INTRO`; }
+    else if (s.warm > 0) { escEl.classList.remove('hidden'); escEl.textContent = `THE NIGHT BEGINS IN ${s.warm}`; }
     else { escEl.classList.toggle('hidden', s.esc === null); if (s.esc !== null) escEl.textContent = `THE DOOR CLOSES IN ${s.esc}`; }
-    $('#intro-warm').textContent = s.warm > 0 ? `The night begins in ${s.warm}` : 'The night has begun';
+    $('#intro-warm').textContent = s.waitFor > 0 ? `Waiting for ${s.waitFor} ${s.waitFor === 1 ? 'soul' : 'souls'} to finish the intro` : s.warm > 0 ? `The night begins in ${s.warm}` : 'The night has begun';
     S.nearAltar = !!(m && !m.down && !m.esc && remaining === 0 && !s.solved && Math.hypot(m.x - g.altar.x - 0.5, m.y - g.altar.y - 0.5) < 1.6);
     const prompt = $('#hud-prompt'); prompt.classList.toggle('hidden', !S.nearAltar || !$('#puzzle').classList.contains('hidden'));
     prompt.textContent = 'Press E (or tap E) to read the altar';

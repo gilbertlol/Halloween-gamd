@@ -144,3 +144,21 @@ test('the night is frozen during the warm-up, then runs', () => {
   assert.ok(g.timeLeft < t0, 'clock runs after warm-up');
   assert.strictEqual(g.snapshot().warm, 0);
 });
+
+test('the cinematic hold ends once every player reports ready', () => {
+  const g = new Game(1, [{ id: 'a', name: 'A', profile: { items: [] } }, { id: 'b', name: 'B', profile: { items: [] } }], () => {}, { intro: true, warmup: 120 });
+  for (let i = 0; i < 30; i++) g.step();
+  assert.ok(g.warmup > 100 && g.snapshot().waitFor === 2, 'holding for both players');
+  g.markReady('a');
+  for (let i = 0; i < 30; i++) g.step();
+  assert.ok(g.warmup > 100 && g.snapshot().waitFor === 1, 'still holding for B');
+  g.markReady('b');
+  assert.ok(g.warmup <= 4, 'collapses to the short countdown');
+  assert.strictEqual(g.snapshot().waitFor, 0);
+  for (let i = 0; i < 30 * 5; i++) g.step();
+  assert.ok(g.timeLeft < 240, 'night is running');
+  // a player who leaves mid-cinematic does not hold the others
+  const h = new Game(1, [{ id: 'a', name: 'A', profile: { items: [] } }, { id: 'b', name: 'B', profile: { items: [] } }], () => {}, { intro: true, warmup: 120 });
+  h.markReady('a'); h.removePlayer('b');
+  assert.ok(h.warmup <= 4);
+});

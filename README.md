@@ -54,9 +54,11 @@ plays the same level at the same time.
   monster voices panned and attenuated by distance, *phantom* monster sounds
   from empty corridors, and monsters that go silent for a while so they can
   come out of nowhere.
-- **Opening cinematic.** A 15-second intro video plays the first time a room
-  begins a night, with a Skip button; the server holds the night frozen while
-  it runs so nobody loses clock time. The muted version loops behind the lobby.
+- **Opening cinematic.** The intro video plays the first time a room begins
+  a night, with a Skip button. The server holds the night frozen until every
+  player's video has ended or been skipped, so slow connections never cut it
+  short and nobody loses clock time. The muted version loops behind the
+  lobby, where a button replays the full intro.
 - **Jump scares.** Random, when you are caught, and when the altar rejects
   you. Screen shake, chromatic flash, scream.
 - **Co-op rules.** A caught player goes down; a teammate can revive them.

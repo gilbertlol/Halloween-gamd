@@ -35,8 +35,9 @@ so files can be replaced one at a time.
 | `intro.mp4` | same cinematic (H.264 + AAC) for browsers without VP9, such as Safari |
 | `intro-muted.webm` | silent loop behind the lobby |
 
-The server freezes the night for `INTRO_SECONDS` + 2 (in `server/index.js`)
-while the cinematic plays; update that constant if the video length changes.
+The server freezes the night until every client reports that its cinematic
+ended or was skipped (safety limit `INTRO_MAX_SECONDS` in `server/index.js`),
+so the video can be any length.
 
 ## Audio
 
