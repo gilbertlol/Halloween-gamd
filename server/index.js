@@ -13,7 +13,28 @@ const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
 const MAX_PLAYERS = 6;
 const SNAPSHOT_EVERY = 2; // ticks -> 15 snapshots/s
-const INTRO_MAX_SECONDS = 120; // safety limit for the cinematic hold if a client never reports ready
+const INTRO_MAX_SECONDS = 120;
+
+// Survivor skins unlock by surviving nights (cosmetic only).
+const SURVIVORS = [
+  { id: 0, name: 'Blue', wins: 0 },
+  { id: 1, name: 'Amber', wins: 1 },
+  { id: 2, name: 'Purple', wins: 3 },
+];
+function survivorUnlocked(profile, id) { const s = SURVIVORS[id]; return !!s && (profile.wins || 0) >= s.wins; }
+
+// Tonight's Night: one seeded map for everyone, changing at midnight UTC.
+function tonight() {
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  let h = 2166136261; for (const ch of date) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  const seed = h >>> 0;
+  const day = Math.floor(now.getTime() / 86400000);
+  const level = 2 + (day % 5); // nights 2..6: tough enough to matter, open to everyone
+  const L = LEVELS[level - 1];
+  const resetAt = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  return { date, seed, level, name: L.name, difficulty: L.difficulty, resetsIn: Math.max(0, Math.floor((resetAt - now.getTime()) / 1000)), scores: store.topDaily(date, 10) };
+} // safety limit for the cinematic hold if a client never reports ready
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'audio/ogg', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
 
@@ -57,6 +78,8 @@ class Room {
     this.timer = null;
     this.tick = 0;
     this.introShown = false;
+    this.mode = 'night'; // or 'tonight'
+    this.public = true;
   }
   broadcast(msg, except) {
     const data = JSON.stringify(msg);
@@ -70,21 +93,24 @@ class Room {
   lobbyPacket() {
     return {
       t: 'room', code: this.code, host: this.hostId, level: this.level, unlocked: this.maxUnlocked(), inGame: !!this.game,
-      players: [...this.players.values()].map((c) => ({ id: c.id, name: c.name, items: c.profile.items, unlocked: c.profile.unlocked, wins: c.profile.wins })),
+      mode: this.mode, public: this.public, tonight: tonight(),
+      players: [...this.players.values()].map((c) => ({ id: c.id, name: c.name, items: c.profile.items, unlocked: c.profile.unlocked, wins: c.profile.wins, survivor: c.profile.survivor || 0 })),
     };
   }
   sendLobby() { this.broadcast(this.lobbyPacket()); }
 
   start() {
     if (this.game) return;
-    const level = Math.max(1, Math.min(this.level, this.maxUnlocked()));
+    const tn = this.mode === 'tonight' ? tonight() : null;
+    const level = tn ? tn.level : Math.max(1, Math.min(this.level, this.maxUnlocked()));
     this.level = level;
+    this.tonightDate = tn ? tn.date : null;
     const roster = [...this.players.values()].map((c) => ({ id: c.id, name: c.name, profile: c.profile }));
     // the cinematic plays once per room; the night stays frozen while it runs
     const intro = !this.introShown;
     this.introShown = true;
     try {
-      this.game = new Game(level, roster, (type, payload) => this.onGameEmit(type, payload), { intro, warmup: intro ? INTRO_MAX_SECONDS : 4 });
+      this.game = new Game(level, roster, (type, payload) => this.onGameEmit(type, payload), { intro, warmup: intro ? INTRO_MAX_SECONDS : 4, seed: tn ? tn.seed : undefined, mode: this.mode });
     } catch (e) {
       console.error('[room] failed to start game', e);
       return this.broadcast({ t: 'error', msg: 'The map refused to be born. Try again.' });
@@ -92,6 +118,7 @@ class Room {
     this.broadcast({ t: 'start', ...this.game.initPacket() });
     this.tick = 0;
     this.timer = setInterval(() => this.loop(), TICK * 1000);
+    broadcastRooms();
   }
 
   loop() {
@@ -141,11 +168,14 @@ class Room {
         });
       }
     }
+    const entry = { team: names, score: result.score, level: g.level, levelName: g.levelName || result.levelName, won: result.won, escaped: result.escaped, timeLeft: result.timeLeft, at: Date.now() };
+    if (this.tonightDate && (result.won || result.elapsed >= 30)) store.addDailyScore(this.tonightDate, entry);
     if (result.won || result.elapsed >= 30) store.addScore({ team: names, score: result.score, level: g.level, levelName: g.levelName || result.levelName, won: result.won, escaped: result.escaped, timeLeft: result.timeLeft, at: Date.now() });
-    this.broadcast({ t: 'end', ...result, scores: store.topScores(20), unlocked: this.maxUnlocked() });
+    this.broadcast({ t: 'end', ...result, scores: store.topScores(20), unlocked: this.maxUnlocked(), tonight: this.tonightDate ? tonight() : null, survivorUnlocks: SURVIVORS });
     this.stopLoop();
     this.game = null;
     this.sendLobby();
+    broadcastRooms();
   }
 
   stopLoop() { if (this.timer) { clearInterval(this.timer); this.timer = null; } }
@@ -157,11 +187,28 @@ class Room {
       this.stopLoop();
       this.game = null;
       rooms.delete(this.code);
+      broadcastRooms();
       return;
     }
     if (this.hostId === client.id) this.hostId = this.players.keys().next().value;
     this.sendLobby();
+    broadcastRooms();
   }
+}
+
+// Open rooms anyone can join from the lobby.
+function publicRooms() {
+  const out = [];
+  for (const r of rooms.values()) {
+    if (!r.public || r.game || r.players.size >= MAX_PLAYERS) continue;
+    const host = r.players.get(r.hostId);
+    out.push({ code: r.code, host: host ? host.name : '?', players: r.players.size, max: MAX_PLAYERS, level: r.level, mode: r.mode });
+  }
+  return out.slice(0, 30);
+}
+function broadcastRooms() {
+  const data = JSON.stringify({ t: 'rooms', rooms: publicRooms() });
+  for (const c of clients.values()) if (!c.room && c.ws.readyState === 1) c.ws.send(data);
 }
 
 // ------------------------------------------------------------------ ws
@@ -173,7 +220,7 @@ wss.on('connection', (ws) => {
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
 
-  send(ws, { t: 'hello', id: client.id, levels: LEVELS.map(publicLevel), items: ITEMS, scores: store.topScores(20) });
+  send(ws, { t: 'hello', id: client.id, levels: LEVELS.map(publicLevel), items: ITEMS, scores: store.topScores(20), tonight: tonight(), rooms: publicRooms(), survivors: SURVIVORS });
 
   ws.on('message', (raw) => {
     let msg;
@@ -220,17 +267,45 @@ function handle(c, msg) {
       if (!room.hostId) room.hostId = c.id;
       send(c.ws, { t: 'joined', code: room.code, id: c.id, profile: c.profile });
       room.sendLobby();
+      broadcastRooms();
       break;
     }
     case 'leave': {
       if (c.room) { c.room.remove(c); c.room = null; }
-      send(c.ws, { t: 'left' });
+      send(c.ws, { t: 'left', rooms: publicRooms(), tonight: tonight() });
       break;
     }
+    case 'setMode': {
+      const r = c.room; if (!r || r.hostId !== c.id || r.game) return;
+      r.mode = msg.mode === 'tonight' ? 'tonight' : 'night';
+      r.sendLobby(); broadcastRooms();
+      break;
+    }
+    case 'setPublic': {
+      const r = c.room; if (!r || r.hostId !== c.id) return;
+      r.public = !!msg.public;
+      r.sendLobby(); broadcastRooms();
+      break;
+    }
+    case 'setSurvivor': {
+      const id = Number(msg.survivor) | 0;
+      if (!c.profile || !survivorUnlocked(c.profile, id)) return;
+      c.profile = store.updateProfile(c.name, (p) => { p.survivor = id; });
+      if (c.room) c.room.sendLobby();
+      break;
+    }
+    case 'flare': {
+      const r = c.room; if (!r || !r.game) return;
+      r.game.dropFlare(c.id);
+      break;
+    }
+    case 'rooms':
+      send(c.ws, { t: 'rooms', rooms: publicRooms() });
+      break;
     case 'setLevel': {
       const r = c.room; if (!r || r.hostId !== c.id || r.game) return;
       const lv = Number(msg.level) | 0;
-      if (lv >= 1 && lv <= r.maxUnlocked()) { r.level = lv; r.sendLobby(); }
+      if (lv >= 1 && lv <= r.maxUnlocked()) { r.level = lv; r.mode = 'night'; r.sendLobby(); broadcastRooms(); }
       break;
     }
     case 'start': {

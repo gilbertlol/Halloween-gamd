@@ -22,7 +22,8 @@ class Game {
     this.awaiting = new Set(this.intro ? roomPlayers.map((p) => p.id) : []);
     this.cfg = LEVELS[level - 1];
     this.emit = emit; // (type, payload) => broadcast to room
-    this.seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+    this.seed = opts.seed !== undefined ? (Number(opts.seed) >>> 0) : ((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
+    this.mode = opts.mode || 'night';
     this.R = makeRng(this.seed);
     this.map = generate(this.cfg, this.seed);
     this.W = this.map.W; this.H = this.map.H; this.tiles = this.map.tiles;
@@ -41,6 +42,21 @@ class Game {
     this.phantomTimer = this.rand(12, 30);
     this.tick = 0;
     this.events = [];
+    // guidance: after a while without team progress, players get a compass hint
+    this.lastProgress = 0;
+    this.hintTick = 0;
+    // ghosts (downed players) can drop flares that light an area for the team
+    this.flares = [];
+    // tension events: blackout, hunt (the bell tolls), door slam
+    this.event_ = null; // active event {type, left}
+    this.eventQueue = [];
+    const nEvents = this.level <= 2 ? 1 : this.level <= 5 ? 2 : 3;
+    for (let i = 0; i < nEvents; i++) this.eventQueue.push(this.rand(this.cfg.time * 0.22, this.cfg.time * 0.85));
+    this.eventQueue.sort((a, b) => a - b);
+    this.slammed = null; // {door, left}
+    // near misses: score bonus and streak for monsters that pass by without catching
+    this.bonus = 0;
+    this.closeCalls = 0;
 
     // Mystery: each fragment reveals a rune; the altar wants them in order.
     const runes = this.R.shuffle(RUNES.slice());
@@ -62,7 +78,7 @@ class Game {
         vision: this.cfg.vision + (items.has('lantern') ? 1.5 : 0),
         speed: PLAYER.speed * (items.has('boots') ? 1.12 : 1),
         skeletonUsed: false, amuletUsed: false,
-        pickups: 0,
+        pickups: 0, streak: 0, near: new Set(), hint: null, flareCd: 0, closeCalls: 0,
       });
     }
 
@@ -112,8 +128,8 @@ class Game {
       const d = this.doorAt(tx, ty);
       if (d.open) return true;
       // Opening the door is a side effect of walking into it with the key.
-      if (this.ownedKeys.has(d.keyId)) { this.openDoor(d, p, false); return true; }
-      if (p && p.items.has('skeleton') && !p.skeletonUsed) { p.skeletonUsed = true; this.openDoor(d, p, true); return true; }
+      if (this.ownedKeys.has(d.keyId)) { if (!p) return false; this.openDoor(d, p, false); return true; } // ghosts cannot open doors
+      if (p && !p.down && p.items.has('skeleton') && !p.skeletonUsed) { p.skeletonUsed = true; this.openDoor(d, p, true); return true; }
       return false;
     }
     return false;
@@ -126,8 +142,10 @@ class Game {
     return false;
   }
 
+  progress() { this.lastProgress = this.elapsed; for (const p of this.players.values()) p.hint = null; }
+
   openDoor(d, p, skeleton) {
-    d.open = true; this.doorsOpened++;
+    d.open = true; this.doorsOpened++; this.progress();
     this.tiles[d.y * this.W + d.x] = T.DOOR; // stays a door tile, now open
     this.event({ kind: 'door', x: d.x, y: d.y, keyId: d.keyId, by: p ? p.name : null, skeleton: !!skeleton });
   }
@@ -165,7 +183,7 @@ class Game {
     if (dist(p, { x: this.altar.x + 0.5, y: this.altar.y + 0.5 }) > 1.6) return;
     const ok = Array.isArray(seq) && seq.length === this.solution.length && seq.every((r, i) => r === this.solution[i]);
     if (ok) {
-      this.solved = true; this.exit.open = true;
+      this.solved = true; this.exit.open = true; this.progress();
       this.event({ kind: 'exitOpen', by: p.name, x: this.exit.x, y: this.exit.y });
     } else {
       this.wrongAttempts++;
@@ -199,14 +217,165 @@ class Game {
     for (const p of this.players.values()) this.updatePlayer(p, dt);
     for (const m of this.monsters) this.updateMonster(m, dt);
     this.checkCatches();
+    this.checkNearMisses();
     this.checkEnd(dt);
     this.updateScares(dt);
+    this.updateEvents(dt);
+    for (const f of this.flares) f.left -= dt;
+    this.flares = this.flares.filter((f) => f.left > 0);
+    if (this.tick % 15 === 0) this.updateHints();
+  }
+
+  // ---------------------------------------------------------------- guidance
+  // After 15 s without team progress, every living player gets a bearing
+  // toward the nearest objective they can actually reach (keys they can get
+  // to, fragments, then the altar, then the exit), following the corridors.
+  updateHints() {
+    const idle = this.elapsed - this.lastProgress;
+    if (idle < 15) { for (const p of this.players.values()) p.hint = null; return; }
+    const targets = [];
+    if (this.exit.open) targets.push({ x: this.exit.x + 0.5, y: this.exit.y + 0.5, kind: 'exit' });
+    else if (this.fragments.every((f) => f.taken)) targets.push({ x: this.altar.x + 0.5, y: this.altar.y + 0.5, kind: 'altar' });
+    else {
+      for (const f of this.fragments) if (!f.taken) targets.push({ x: f.x, y: f.y, kind: 'fragment' });
+      for (const k of this.keys) if (!k.taken) targets.push({ x: k.x, y: k.y, kind: 'key' });
+    }
+    if (!targets.length) return;
+    const W = this.W, H = this.H;
+    const targetIdx = new Map(targets.map((t) => [Math.floor(t.y) * W + Math.floor(t.x), t]));
+    for (const p of this.players.values()) {
+      if (p.escaped) { p.hint = null; continue; }
+      // BFS from the player over tiles the team can pass
+      const prev = new Int32Array(W * H).fill(-1);
+      const start = Math.floor(p.y) * W + Math.floor(p.x);
+      prev[start] = start;
+      const q = [start]; let found = -1;
+      for (let i = 0; i < q.length && found < 0; i++) {
+        const c = q[i];
+        if (targetIdx.has(c) && c !== start) { found = c; break; }
+        const x = c % W, y = (c - x) / W;
+        for (const [dx, dy] of DIRS) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const n = ny * W + nx;
+          if (prev[n] !== -1) continue;
+          const t = this.tiles[n];
+          if (t === T.WALL) continue;
+          if (t === T.EXIT && !this.exit.open) continue;
+          if (t === T.DOOR) { const d = this.doorAt(nx, ny); if (!d.open && (!this.ownedKeys.has(d.keyId) || (this.slammed && this.slammed.door === d))) continue; }
+          prev[n] = c; q.push(n);
+        }
+      }
+      if (found < 0) { p.hint = null; continue; }
+      // walk back to find the waypoint ~4 tiles along the path
+      const path = [];
+      for (let c = found; c !== start; c = prev[c]) path.push(c);
+      path.reverse();
+      const wp = path[Math.min(path.length - 1, 3)];
+      const wx = (wp % W) + 0.5, wy = Math.floor(wp / W) + 0.5;
+      const fresh = !p.hint;
+      p.hint = { a: Math.round(Math.atan2(wy - p.y, wx - p.x) * 100) / 100, d: path.length, kind: targetIdx.get(found).kind };
+      if (fresh && !p.down) this.event({ kind: 'hint', target: p.id, what: p.hint.kind });
+    }
+  }
+
+  // ---------------------------------------------------------------- near misses
+  // A monster that comes within a tile and leaves without catching you is a
+  // close call: bonus points and a streak that resets when you go down.
+  checkNearMisses() {
+    for (const p of this.players.values()) {
+      if (p.down || p.escaped) { p.near.clear(); continue; }
+      for (const m of this.monsters) {
+        const d = dist(p, m);
+        if (d < 1.15) p.near.add(m.id);
+        else if (d > 1.6 && p.near.has(m.id)) {
+          p.near.delete(m.id);
+          if (p.invuln > 0) continue;
+          p.streak++; p.closeCalls++; this.closeCalls++;
+          const pts = 50 * this.level * Math.min(5, p.streak);
+          this.bonus += pts;
+          this.event({ kind: 'closeCall', by: p.name, byId: p.id, pts, streak: p.streak, x: p.x, y: p.y, type: m.type });
+        }
+      }
+    }
+  }
+
+  liveScore() {
+    const frags = this.fragments.filter((f) => f.taken).length, keys = this.keys.filter((k) => k.taken).length;
+    return frags * 150 + keys * 100 + this.bonus + this.doorsOpened * 25;
+  }
+
+  // ---------------------------------------------------------------- tension events
+  updateEvents(dt) {
+    if (this.event_) {
+      this.event_.left -= dt;
+      if (this.event_.left <= 0) this.endEvent();
+    }
+    if (this.slammed) {
+      this.slammed.left -= dt;
+      if (this.slammed.left <= 0) { this.slammed.door.open = true; this.event({ kind: 'unslam', x: this.slammed.door.x, y: this.slammed.door.y }); this.slammed = null; }
+    }
+    if (!this.event_ && this.eventQueue.length && this.elapsed >= this.eventQueue[0]) {
+      this.eventQueue.shift();
+      this.startEvent();
+    }
+  }
+
+  startEvent() {
+    const alive = [...this.players.values()].filter((p) => !p.down && !p.escaped);
+    if (!alive.length) return;
+    const openDoors = this.doors.filter((d) => d.open);
+    let type = this.R.pick(['blackout', 'hunt', 'slam']);
+    if (type === 'slam' && !openDoors.length) type = this.R.pick(['blackout', 'hunt']);
+    if (type === 'slam') {
+      // relock the open door nearest a living player: they will have to find another way, or wait
+      let best = null, bd = Infinity;
+      for (const d of openDoors) for (const p of alive) { const dd = Math.abs(d.x + 0.5 - p.x) + Math.abs(d.y + 0.5 - p.y); if (dd < bd && dd > 1.5) { bd = dd; best = d; } }
+      if (!best) return;
+      best.open = false; this.slammed = { door: best, left: 20 };
+      this.event_ = { type, left: 20, x: best.x, y: best.y };
+      this.event({ kind: 'eventStart', type, x: best.x, y: best.y, secs: 20 });
+      return;
+    }
+    if (type === 'blackout') {
+      this.event_ = { type, left: 10 };
+      for (const p of this.players.values()) { p.visionSaved = p.vision; p.vision = Math.max(2, p.vision * 0.5); }
+      this.event({ kind: 'eventStart', type, secs: 10 });
+    } else {
+      this.event_ = { type, left: 15 };
+      for (const m of this.monsters) m.speed = m.base * 1.6;
+      this.event({ kind: 'eventStart', type, secs: 15 });
+    }
+  }
+
+  endEvent() {
+    const e = this.event_; this.event_ = null;
+    if (!e) return;
+    if (e.type === 'blackout') for (const p of this.players.values()) if (p.visionSaved) { p.vision = p.visionSaved; p.visionSaved = null; }
+    if (e.type === 'hunt') for (const m of this.monsters) m.speed = m.base;
+    this.event({ kind: 'eventEnd', type: e.type });
+  }
+
+  // A downed player can drop a flare: it lights an area for the team and
+  // marks it on everyone's map. One every 30 seconds.
+  dropFlare(id) {
+    const p = this.players.get(id);
+    if (!p || !p.down || p.escaped || p.flareCd > 0 || this.status !== 'running') return;
+    p.flareCd = 30;
+    this.flares.push({ x: p.x, y: p.y, left: 8, by: p.name });
+    this.event({ kind: 'flare', by: p.name, x: p.x, y: p.y });
   }
 
   updatePlayer(p, dt) {
     if (p.invuln > 0) p.invuln -= dt;
+    if (p.flareCd > 0) p.flareCd -= dt;
     if (p.escaped) return;
-    if (p.down) return;
+    if (p.down) {
+      // a ghost drifts slowly; monsters ignore it, friends revive it where it is
+      let gx = p.dx, gy = p.dy;
+      if (gx || gy) { const len = Math.hypot(gx, gy); gx /= len; gy /= len; p.fx = gx; p.fy = gy; this.moveCircle(p, gx * p.speed * 0.4 * dt, gy * p.speed * 0.4 * dt, (tx, ty) => this.passableForPlayer(tx, ty, null)); }
+      return;
+    }
     let dx = p.dx, dy = p.dy;
     if (dx || dy) {
       const len = Math.hypot(dx, dy); dx /= len; dy /= len;
@@ -215,10 +384,10 @@ class Game {
     }
     // pickups
     for (const k of this.keys) {
-      if (!k.taken && dist(p, k) < 0.7) { k.taken = true; this.ownedKeys.add(k.id); p.pickups++; this.event({ kind: 'key', keyId: k.id, by: p.name, x: k.x, y: k.y }); }
+      if (!k.taken && dist(p, k) < 0.7) { k.taken = true; this.ownedKeys.add(k.id); p.pickups++; this.progress(); this.event({ kind: 'key', keyId: k.id, by: p.name, x: k.x, y: k.y }); }
     }
     for (const f of this.fragments) {
-      if (!f.taken && dist(p, f) < 0.7) { f.taken = true; p.pickups++; this.event({ kind: 'fragment', id: f.id, rune: f.rune, order: f.order, by: p.name, x: f.x, y: f.y }); }
+      if (!f.taken && dist(p, f) < 0.7) { f.taken = true; p.pickups++; this.progress(); this.event({ kind: 'fragment', id: f.id, rune: f.rune, order: f.order, by: p.name, x: f.x, y: f.y }); }
     }
     if (this.item && !this.item.taken && dist(p, this.item) < 0.7) {
       this.item.taken = true; this.item.by = p.id;
@@ -226,14 +395,14 @@ class Game {
     }
     // reaching the open exit
     if (this.exit.open && Math.floor(p.x) === this.exit.x && Math.floor(p.y) === this.exit.y) {
-      p.escaped = true;
+      p.escaped = true; this.progress();
       this.event({ kind: 'escaped', by: p.name });
       if (this.escapeTimer === null) this.escapeTimer = 15;
     }
     // reviving a fallen friend: stand next to them
     for (const o of this.players.values()) {
       if (o === p || !o.down) continue;
-      if (dist(p, o) < 0.9) {
+      if (dist(p, o) < 1.0) {
         o.reviveProgress += dt;
         if (o.reviveProgress >= PLAYER.reviveSeconds) {
           o.down = false; o.reviveProgress = 0; o.invuln = 3;
@@ -357,6 +526,16 @@ class Game {
 
   pickDir(m, open, turnChance) {
     // called at a tile centre. `open` = list of passable dirs. Returns new dir or null to keep going.
+    if (this.event_ && this.event_.type === 'hunt' && m.type !== 'ghost') {
+      // the bell tolls: everything hunts. Prefer the open direction that closes on the nearest player.
+      const near = this.nearestAlive(m);
+      if (near && this.R.rand() < 0.75) {
+        let best = null, bd = Infinity;
+        for (const [dx, dy] of open) { const d = Math.abs(m.x + dx - near.x) + Math.abs(m.y + dy - near.y); if (d < bd) { bd = d; best = [dx, dy]; } }
+        if (best && !(best[0] === m.dx && best[1] === m.dy)) return best;
+        if (best) return null;
+      }
+    }
     const ahead = open.find(([dx, dy]) => dx === m.dx && dy === m.dy);
     const sides = open.filter(([dx, dy]) => !(dx === -m.dx && dy === -m.dy) && !(dx === m.dx && dy === m.dy));
     if (ahead && !(sides.length && this.R.rand() < turnChance)) return null;
@@ -444,7 +623,7 @@ class Game {
             this.event({ kind: 'amulet', by: p.name });
             break;
           }
-          p.down = true; p.reviveProgress = 0;
+          p.down = true; p.reviveProgress = 0; p.streak = 0; p.near.clear();
           this.event({ kind: 'caught', who: p.name, whoId: p.id, type: m.type, x: p.x, y: p.y });
           this.event({ kind: 'scare', target: p.id, reason: 'caught', type: m.type });
           break;
@@ -506,7 +685,9 @@ class Game {
     } else {
       score = this.level * 60 + frags * 50 + keys * 50 + Math.round(this.elapsed) * 2;
     }
-    this.result = { won, reason, score, level: this.level, levelName: this.cfg.name, escaped, frags, keys, timeLeft: Math.round(this.timeLeft), elapsed: Math.round(this.elapsed), players: [...this.players.values()].map((p) => p.name) };
+    score += this.bonus;
+    const best = [...this.players.values()].reduce((a, p) => (p.closeCalls > (a ? a.closeCalls : -1) ? p : a), null);
+    this.result = { won, reason, score, bonus: this.bonus, closeCalls: this.closeCalls, daredevil: best && best.closeCalls > 0 ? best.name : null, mode: this.mode, seed: this.seed, level: this.level, levelName: this.cfg.name, escaped, frags, keys, timeLeft: Math.round(this.timeLeft), elapsed: Math.round(this.elapsed), players: [...this.players.values()].map((p) => p.name) };
     this.emit('finished', this.result);
   }
 
@@ -519,7 +700,7 @@ class Game {
       exit: { x: this.exit.x, y: this.exit.y }, altar: this.altar,
       time: this.cfg.time, fragments: this.fragments.length, keys: this.keys.length,
       monsters: Object.keys(this.cfg.monsters), seed: this.seed,
-      cinematic: this.intro, warmup: Math.ceil(this.warmup),
+      cinematic: this.intro, warmup: Math.ceil(this.warmup), mode: this.mode,
     };
   }
 
@@ -527,8 +708,10 @@ class Game {
     const players = [...this.players.values()].map((p) => ({
       id: p.id, x: r2(p.x), y: r2(p.y), fx: Math.round(p.fx), fy: Math.round(p.fy), down: p.down, esc: p.escaped,
       rv: p.down ? r2(p.reviveProgress / PLAYER.reviveSeconds) : 0, vis: r2(p.vision), inv: p.invuln > 0,
+      st: p.streak, fc: p.down ? Math.ceil(Math.max(0, p.flareCd)) : 0, hint: p.hint ? [p.hint.a, p.hint.kind] : null,
     }));
     const alive = players.filter((p) => !p.down && !p.esc);
+    const flares = this.flares.map((f) => ({ x: r2(f.x), y: r2(f.y), left: r2(f.left) }));
     const monsters = [];
     for (const m of this.monsters) {
       let seen = false, heard = false;
@@ -537,6 +720,7 @@ class Game {
         if (d <= p.vis + 0.6) seen = true;
         if (d <= HEAR_RANGE) heard = true;
       }
+      for (const f of flares) if (Math.hypot(f.x - m.x, f.y - m.y) <= 4.5) seen = true;
       if (!seen && (!heard || m.silent)) continue;
       monsters.push({ id: m.id, t: m.type, x: r2(m.x), y: r2(m.y), dx: m.dx, dy: m.dy, s: m.state, v: seen ? 1 : 0, q: m.silent ? 1 : 0 });
     }
@@ -548,6 +732,8 @@ class Game {
       owned: [...this.ownedKeys], doors: this.doors.filter((d) => d.open).map((d) => d.keyId),
       item: this.item && !this.item.taken ? { x: this.item.x, y: this.item.y, type: this.item.type } : null,
       exitOpen: this.exit.open, solved: this.solved, esc: this.escapeTimer === null ? null : Math.ceil(this.escapeTimer),
+      flares, evt: this.event_ ? { type: this.event_.type, left: Math.ceil(this.event_.left), x: this.event_.x, y: this.event_.y } : null,
+      slam: this.slammed ? this.slammed.door.keyId : null, score: this.liveScore(),
       events: this.events,
     };
     this.events = [];

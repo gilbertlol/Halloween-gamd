@@ -4,7 +4,7 @@
   const $ = (s) => document.querySelector(s);
   const Audio = window.NightAudio;
   const Assets = window.NightAssets;
-  Assets.load().then(() => { if (S.game) resize(); });
+  Assets.load().then(() => { if (S.game) resize(); if (S.room) renderRoom(); });
   // Draw a sprite centred at (x,y) on `c` (default main ctx); `size` = its larger side in tiles.
   function sprite(key, x, y, s, size, flip, alpha, c) {
     const sp = Assets.img[key]; if (!sp) return false;
@@ -58,10 +58,11 @@
 
   function onMessage(m) {
     switch (m.t) {
-      case 'hello': S.id = m.id; S.levels = m.levels; S.itemsMeta = m.items; renderScores($('#scores-table tbody'), m.scores); break;
+      case 'hello': S.id = m.id; S.levels = m.levels; S.itemsMeta = m.items; S.survivors = m.survivors || []; renderScores($('#scores-table tbody'), m.scores); renderTonight(m.tonight); renderRooms(m.rooms); break;
+      case 'rooms': renderRooms(m.rooms); break;
       case 'joined': S.profile = m.profile; Audio.startMusic(); $('#room-code-display').textContent = m.code; $('#join-panel').classList.add('hidden'); $('#room-panel').classList.remove('hidden'); $('#scores-panel').classList.add('full'); break;
       case 'room': S.room = m; renderRoom(); break;
-      case 'left': S.room = null; $('#room-panel').classList.add('hidden'); $('#join-panel').classList.remove('hidden'); $('#scores-panel').classList.remove('full'); break;
+      case 'left': S.room = null; $('#room-panel').classList.add('hidden'); $('#join-panel').classList.remove('hidden'); $('#scores-panel').classList.remove('full'); renderRooms(m.rooms); renderTonight(m.tonight); break;
       case 'error': toast(m.msg); break;
       case 'scores': renderScores($('#scores-table tbody'), m.scores); break;
       case 'start': startGame(m); break;
@@ -88,6 +89,61 @@
   }
   function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 
+  // ---- Tonight's Night: the daily map everyone plays, with its own board
+  function renderTonight(t) {
+    if (!t) return;
+    S.tonight = t; S.tonightAt = Date.now();
+    const card = $('#tonight-card');
+    card.innerHTML = `<b>${esc(t.name)}</b> <span class="df ${t.difficulty.split(' ')[0]}">${t.difficulty}</span><div class="meta">One map for everyone, the same for every room. New night in <span class="reset" id="tonight-reset">--:--:--</span></div>`;
+    const tb = $('#tonight-table tbody'); tb.innerHTML = '';
+    if (!t.scores.length) tb.innerHTML = '<tr><td colspan="4" class="hint">Nobody has survived tonight yet. Set the time to beat.</td></tr>';
+    t.scores.forEach((s, i) => { const tr = document.createElement('tr'); tr.innerHTML = `<td>${i + 1}</td><td>${esc(s.team.join(', '))}</td><td class="score">${s.score.toLocaleString()}</td><td class="${s.won ? 'won' : 'lost'}">${s.won ? `escaped · ${fmt(s.timeLeft)} left` : 'taken'}</td>`; tb.appendChild(tr); });
+    tickTonight();
+  }
+  function tickTonight() {
+    const t = S.tonight; if (!t) return;
+    const left = Math.max(0, t.resetsIn - Math.floor((Date.now() - S.tonightAt) / 1000));
+    const el = $('#tonight-reset'); if (el) el.textContent = `${String(Math.floor(left / 3600)).padStart(2, '0')}:${String(Math.floor((left % 3600) / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`;
+    if (left === 0 && !S.game) send({ t: 'scores' });
+  }
+  setInterval(tickTonight, 1000);
+
+  // ---- open rooms anyone can join
+  function renderRooms(rooms) {
+    const ul = $('#rooms-list'); if (!ul || !rooms) return;
+    ul.innerHTML = '';
+    if (!rooms.length) { ul.innerHTML = '<li class="empty">No open rooms right now. Create one and leave it open: strangers will find you.</li>'; return; }
+    for (const r of rooms) {
+      const L = S.levels[r.level - 1];
+      const li = document.createElement('li');
+      li.innerHTML = `<span>${esc(r.host)}'s room <span class="meta">· ${r.players}/${r.max} · ${r.mode === 'tonight' ? "Tonight's Night" : esc(L ? L.name : 'Night ' + r.level)}</span></span>`;
+      const b = document.createElement('button'); b.textContent = 'Join'; b.onclick = () => doJoin(r.code); li.appendChild(b);
+      ul.appendChild(li);
+    }
+  }
+
+  // ---- survivor picker (cosmetic unlocks by nights survived)
+  function renderSurvivors() {
+    const box = $('#survivor-pick'); if (!box) return;
+    box.innerHTML = '';
+    const me = S.room && S.room.players.find((p) => p.id === S.id);
+    const wins = me ? me.wins : 0, current = me ? me.survivor : 0;
+    for (const sv of S.survivors || []) {
+      const d = document.createElement('div');
+      const locked = wins < sv.wins;
+      d.className = 'survivor' + (sv.id === current ? ' selected' : '') + (locked ? ' locked' : '');
+      if (locked) d.dataset.lock = `🔒 ${sv.wins} win${sv.wins > 1 ? 's' : ''}`;
+      const c = document.createElement('canvas'); c.width = 96; c.height = 120;
+      const sp = Assets.get(`player${sv.id}_s`);
+      if (sp) { const x = c.getContext('2d'); const k = Math.min(96 / sp.width, 120 / sp.height), w = sp.width * k, h = sp.height * k; x.drawImage(sp.img, sp.sx, sp.sy, sp.sw, sp.sh, (96 - w) / 2, (120 - h) / 2, w, h); }
+      else { const x = c.getContext('2d'); x.fillStyle = PLAYER_COLORS[sv.id % PLAYER_COLORS.length]; x.beginPath(); x.arc(48, 60, 30, 0, 7); x.fill(); }
+      d.appendChild(c); const s = document.createElement('span'); s.textContent = sv.name; d.appendChild(s);
+      d.title = locked ? `Survive ${sv.wins} night${sv.wins > 1 ? 's' : ''} to unlock` : sv.name;
+      if (!locked) d.onclick = () => send({ t: 'setSurvivor', survivor: sv.id });
+      box.appendChild(d);
+    }
+  }
+
   function renderRoom() {
     const r = S.room; if (!r) return;
     const isHost = r.host === S.id;
@@ -105,17 +161,25 @@
     if (!items.length) rl.innerHTML = '<li class="hint">None yet. Relics are hidden deep in each night and stay with you forever.</li>';
     for (const it of items) { const meta = S.itemsMeta[it]; const li = document.createElement('li'); li.innerHTML = `✦ ${esc(meta ? meta.name : it)}<small>${esc(meta ? meta.desc : '')}</small>`; rl.appendChild(li); }
 
+    renderSurvivors();
+    if (r.tonight) renderTonight(r.tonight);
+    const tb = $('#btn-tonight');
+    tb.innerHTML = `TONIGHT'S NIGHT · ${esc(r.tonight ? r.tonight.name : '')}<small>One map for everyone today. Beat the world's time, no unlock needed.</small>`;
+    tb.className = 'tonight-btn' + (r.mode === 'tonight' ? ' selected' : '');
+    tb.disabled = !isHost || r.inGame;
+    tb.onclick = () => send({ t: 'setMode', mode: 'tonight' });
+    const chk = $('#chk-public'); chk.checked = !!r.public; chk.disabled = !isHost;
     const grid = $('#level-grid'); grid.innerHTML = '';
     for (const L of S.levels) {
       const b = document.createElement('button');
       const locked = L.n > r.unlocked;
-      b.className = 'level' + (L.n === r.level ? ' selected' : '') + (locked ? ' locked' : '');
+      b.className = 'level' + (L.n === r.level && r.mode !== 'tonight' ? ' selected' : '') + (locked ? ' locked' : '');
       b.innerHTML = `<span class="n">NIGHT ${L.n}${locked ? ' 🔒' : ''}</span><span class="nm">${esc(L.name)}</span><span class="df ${L.difficulty.split(' ')[0]}">${L.difficulty}</span>`;
       b.disabled = !isHost || locked || r.inGame;
       b.onclick = () => send({ t: 'setLevel', level: L.n });
       grid.appendChild(b);
     }
-    const L = S.levels[r.level - 1];
+    const L = S.levels[(r.mode === 'tonight' && r.tonight ? r.tonight.level : r.level) - 1];
     if (L) {
       const mons = Object.entries(L.monsters).map(([k, v]) => `<span class="mon-chip">${v} ${k}${v > 1 ? 's' : ''}</span>`).join('');
       $('#level-info').innerHTML = `<b>${esc(L.name)}</b> — ${L.difficulty}. ${esc(L.intro)}<br>${mons}<br>${Math.floor(L.time / 60)}:${String(L.time % 60).padStart(2, '0')} on the clock · ${L.keys} locked door${L.keys > 1 ? 's' : ''} · ${L.fragments} rune fragments · vision ${L.vision} tiles${L.item ? ` · a relic is hidden here: <b>${esc(S.itemsMeta[L.item].name)}</b>` : ''}`;
@@ -137,6 +201,13 @@
   $('#room-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-join').click(); });
   $('#name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-create').click(); });
   $('#btn-leave').onclick = () => send({ t: 'leave' });
+  $('#chk-public').onchange = (e) => send({ t: 'setPublic', public: e.target.checked });
+  function inviteLink() { return `${location.origin}${location.pathname}?room=${S.room ? S.room.code : ''}`; }
+  async function copyText(text, label) {
+    try { await navigator.clipboard.writeText(text); toast(`${label} copied.`); }
+    catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast(`${label} copied.`); } catch { toast('Could not copy. ' + text); } ta.remove(); }
+  }
+  $('#btn-invite').onclick = () => copyText(inviteLink(), 'Invite link');
   $('#btn-start').onclick = () => { Audio.init(); Audio.resume(); send({ t: 'start' }); };
   const urlRoom = new URLSearchParams(location.search).get('room');
   if (urlRoom) $('#room-code').value = urlRoom.toUpperCase();
@@ -216,12 +287,42 @@
     $('#end-stats').innerHTML = [['Score', m.score.toLocaleString()], ['Escaped', `${m.escaped}/${m.players.length}`], ['Fragments', m.frags], ['Keys', m.keys], [m.won ? 'Time left' : 'Survived', fmt(m.won ? m.timeLeft : m.elapsed)]].map(([k, v]) => `<div><b>${v}</b><small>${k}</small></div>`).join('');
     renderScores($('#end-scores tbody'), m.scores);
     renderScores($('#scores-table tbody'), m.scores);
+    $('#end-daredevil').textContent = m.closeCalls ? `${m.closeCalls} close call${m.closeCalls > 1 ? 's' : ''} worth ${m.bonus.toLocaleString()} points.${m.daredevil ? ` Daredevil of the night: ${m.daredevil}.` : ''}` : '';
+    const et = $('#end-tonight'); et.classList.toggle('hidden', !m.tonight);
+    if (m.tonight) { renderTonight(m.tonight); const tb = $('#end-tonight-scores tbody'); tb.innerHTML = ''; m.tonight.scores.forEach((s, i) => { const tr = document.createElement('tr'); tr.innerHTML = `<td>${i + 1}</td><td>${esc(s.team.join(', '))}</td><td class="score">${s.score.toLocaleString()}</td><td class="${s.won ? 'won' : 'lost'}">${s.won ? `escaped · ${fmt(s.timeLeft)} left` : 'taken'}</td>`; tb.appendChild(tr); }); }
+    S.lastResult = m; drawShareCard(m);
     $('#puzzle').classList.add('hidden');
     setTimeout(() => { $('#end').classList.remove('hidden'); }, 900);
     if (m.won) Audio.victory(); else Audio.defeat();
     Audio.stopMusic();
   }
   function fmt(s) { s = Math.max(0, s | 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+
+  // ---- share card: a picture of the result people can post, plus text and the invite link
+  function shareText(m) {
+    const night = m.mode === 'tonight' ? `Tonight's Night (${m.levelName})` : `Night ${m.level} · ${m.levelName}`;
+    return m.won ? `We escaped ${night} in NIGHTFALL with ${fmt(m.timeLeft)} left. ${m.escaped}/${m.players.length} made it out, ${m.score.toLocaleString()} points. Can you? ${location.origin}${location.pathname}`
+      : `The night took us in ${night} of NIGHTFALL after ${fmt(m.elapsed)}. ${m.score.toLocaleString()} points. Think you can do better? ${location.origin}${location.pathname}`;
+  }
+  function drawShareCard(m) {
+    const c = $('#share-card'), x = c.getContext('2d'), W = c.width, H = c.height;
+    x.fillStyle = '#07050a'; x.fillRect(0, 0, W, H);
+    const g = x.createRadialGradient(W * 0.5, 0, 0, W * 0.5, 0, W); g.addColorStop(0, m.won ? 'rgba(90,209,122,.25)' : 'rgba(163,18,26,.35)'); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.fillRect(0, 0, W, H);
+    const face = (Assets.img.scares || [])[0];
+    if (face) { x.globalAlpha = 0.12; const k = H / face.sh * 1.2; x.drawImage(face.img, face.sx, face.sy, face.sw, face.sh, W - face.sw * k * 0.8, H * 0.1, face.sw * k, face.sh * k); x.globalAlpha = 1; }
+    x.textAlign = 'left'; x.fillStyle = '#f28c28'; x.font = 'bold 30px Georgia'; x.shadowColor = 'rgba(242,140,40,.6)'; x.shadowBlur = 16;
+    x.fillText('N I G H T F A L L', 40, 60); x.shadowBlur = 0;
+    x.fillStyle = m.won ? '#5ad17a' : '#ff3b3b'; x.font = 'bold 44px Georgia'; x.fillText(m.won ? 'WE ESCAPED THE NIGHT' : 'THE NIGHT TOOK US', 40, 125);
+    x.fillStyle = '#d9cfe3'; x.font = '24px Georgia';
+    x.fillText(m.mode === 'tonight' ? `Tonight's Night · ${m.levelName}` : `Night ${m.level} · ${m.levelName}`, 40, 170);
+    x.fillStyle = '#8a7f96'; x.font = '20px Georgia'; x.fillText((m.players || []).join(', ').slice(0, 60), 40, 205);
+    const stats = [[m.score.toLocaleString(), 'SCORE'], [`${m.escaped}/${m.players.length}`, 'ESCAPED'], [fmt(m.won ? m.timeLeft : m.elapsed), m.won ? 'TIME LEFT' : 'SURVIVED'], [String(m.closeCalls || 0), 'CLOSE CALLS']];
+    stats.forEach(([v, k], i) => { const sx = 40 + i * 210; x.fillStyle = 'rgba(0,0,0,.45)'; x.fillRect(sx, 250, 190, 110); x.fillStyle = '#f28c28'; x.font = 'bold 40px Georgia'; x.fillText(v, sx + 16, 305); x.fillStyle = '#8a7f96'; x.font = '14px Georgia'; x.fillText(k, sx + 16, 340); });
+    x.fillStyle = '#8a7f96'; x.font = '18px Georgia'; x.fillText(`${location.host}${location.pathname}  ·  can you survive?`, 40, 430);
+  }
+  $('#btn-share-copy').onclick = () => { if (S.lastResult) copyText(shareText(S.lastResult), 'Result'); };
+  $('#btn-share-link').onclick = () => copyText(inviteLink(), 'Invite link');
+  $('#btn-share-img').onclick = () => { const a = document.createElement('a'); a.download = 'nightfall-result.png'; a.href = $('#share-card').toDataURL('image/png'); a.click(); };
 
   // ============================================================ state + events
   function onState(snap) {
@@ -257,8 +358,24 @@
       case 'cry': Audio.monster(e.type, { x: e.x, y: e.y }, { dash: e.dash, roar: e.roar }); break;
       case 'phantom': if (e.target === S.id) Audio.phantom(e.type, { x: e.x, y: e.y }); break;
       case 'scare': if (e.target === S.id) jumpScare(e.reason, e.type); break;
+      case 'closeCall': if (mine) { Audio.closeCall(e.streak); floater(e.x, e.y, `CLOSE CALL +${e.pts}`, '#ffd98a'); if (e.streak >= 3) floater(e.x, e.y + 0.8, `×${e.streak} STREAK`, '#f28c28'); } break;
+      case 'hint': if (e.target === S.id) { Audio.hintWhisper(); addLog({ key: 'a whisper points the way to a key', fragment: 'a whisper points the way to a rune fragment', altar: 'a whisper calls you to the altar', exit: 'a whisper pulls you toward the exit' }[e.what] || 'a whisper points the way'); } break;
+      case 'flare': addLog(`${e.by} lit a flare from beyond.`, 'relic'); Audio.flare({ x: e.x, y: e.y }); break;
+      case 'eventStart': showEvent(e); break;
+      case 'eventEnd': $('#game').classList.remove('hunt', 'blackout'); if (e.type === 'blackout') addLog('The lamps flicker back to life.'); if (e.type === 'hunt') addLog('The bell falls silent. They slow again.'); break;
+      case 'unslam': addLog('The slammed door creaks open again.'); Audio.door({ x: e.x + 0.5, y: e.y + 0.5 }); break;
       default: break;
     }
+  }
+  function showEvent(e) {
+    const el = $('#hud-event');
+    const text = { blackout: ['BLACKOUT', 'the lamps die for ten seconds'], hunt: ['THE BELL TOLLS', 'everything hunts for fifteen seconds. Hide.'], slam: ['A DOOR SLAMS', 'a door you opened is locked again for twenty seconds'] }[e.type] || [e.type, ''];
+    el.innerHTML = `${text[0]}<small>${text[1]}</small>`; el.classList.remove('hidden');
+    el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+    clearTimeout(showEvent.t); showEvent.t = setTimeout(() => el.classList.add('hidden'), 4000);
+    $('#game').classList.remove('hunt', 'blackout'); if (e.type !== 'slam') $('#game').classList.add(e.type);
+    Audio.eventSound(e.type); shake(e.type === 'slam' ? 500 : 250);
+    addLog(text[0].charAt(0) + text[0].slice(1).toLowerCase() + '. ' + text[1].charAt(0).toUpperCase() + text[1].slice(1) + '.', 'bad');
   }
   function ordinal(n) { return ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth'][n] || `${n}th`; }
 
@@ -284,7 +401,7 @@
     const m = me();
     let obj = '';
     const remaining = g.fragments - s.got.length;
-    if (m && m.down) obj = 'You are down. A friend can revive you by standing beside you for a moment.';
+    if (m && m.down) obj = `You are down, drifting as a ghost. Move to a friend to be revived. ${m.fc > 0 ? `Flare ready in ${m.fc}s.` : 'Press E to drop a flare for the team.'}`;
     else if (m && m.esc) obj = 'You made it out. Wait for the others.';
     else if (s.exitOpen) obj = 'The exit is open. Run for it.';
     else if (remaining > 0) obj = `Find the rune fragments (${s.got.length}/${g.fragments}). ${S.hideOrder ? 'Remember the order they were marked.' : ''} Keys open the locked doors.`;
@@ -296,8 +413,12 @@
     else { escEl.classList.toggle('hidden', s.esc === null); if (s.esc !== null) escEl.textContent = `THE DOOR CLOSES IN ${s.esc}`; }
     $('#intro-warm').textContent = s.waitFor > 0 ? `Waiting for ${s.waitFor} ${s.waitFor === 1 ? 'soul' : 'souls'} to finish the intro` : s.warm > 0 ? `The night begins in ${s.warm}` : 'The night has begun';
     S.nearAltar = !!(m && !m.down && !m.esc && remaining === 0 && !s.solved && Math.hypot(m.x - g.altar.x - 0.5, m.y - g.altar.y - 0.5) < 1.6);
-    const prompt = $('#hud-prompt'); prompt.classList.toggle('hidden', !S.nearAltar || !$('#puzzle').classList.contains('hidden'));
-    prompt.textContent = 'Press E (or tap E) to read the altar';
+    const prompt = $('#hud-prompt');
+    const ghostFlare = !!(m && m.down && m.fc === 0);
+    prompt.classList.toggle('hidden', !(S.nearAltar || ghostFlare) || !$('#puzzle').classList.contains('hidden'));
+    prompt.textContent = ghostFlare ? 'Press E (or tap E) to drop a flare for your friends' : 'Press E (or tap E) to read the altar';
+    $('#hud-score-val').textContent = (s.score || 0).toLocaleString();
+    const st = $('#hud-streak'); st.classList.toggle('hidden', !(m && m.st >= 2)); if (m && m.st >= 2) st.textContent = `close-call streak ×${m.st}`;
   }
 
   // ============================================================ puzzle
@@ -330,7 +451,7 @@
     S.keys[e.code] = true;
     if (S.game && (e.code === 'KeyE' || e.code === 'Space' || e.code === 'Enter')) {
       if (!$('#intro').classList.contains('hidden')) $('#intro').classList.add('hidden');
-      else if ($('#puzzle').classList.contains('hidden')) openPuzzle();
+      else if ($('#puzzle').classList.contains('hidden')) act();
       e.preventDefault();
     }
     if (e.code === 'KeyM') toggleMute();
@@ -354,7 +475,8 @@
   stick.addEventListener('touchstart', (e) => { e.preventDefault(); stickMove(e); }, { passive: false });
   stick.addEventListener('touchmove', (e) => { e.preventDefault(); stickMove(e); }, { passive: false });
   stick.addEventListener('touchend', () => { touch = { active: false, dx: 0, dy: 0 }; knob.style.left = '40px'; knob.style.top = '40px'; });
-  $('#btn-act').addEventListener('touchstart', (e) => { e.preventDefault(); if (!$('#intro').classList.contains('hidden')) $('#intro').classList.add('hidden'); else openPuzzle(); }, { passive: false });
+  $('#btn-act').addEventListener('touchstart', (e) => { e.preventDefault(); if (!$('#intro').classList.contains('hidden')) $('#intro').classList.add('hidden'); else act(); }, { passive: false });
+  function act() { const m = me(); if (m && m.down) send({ t: 'flare' }); else openPuzzle(); }
 
   function pollInput(now) {
     if (!S.game) return;
@@ -473,6 +595,8 @@
 
     if (snap) {
       const alive = snap.players.filter((p) => !p.down && !p.esc).map((p) => ({ ...S.disp.get(p.id), vis: p.vis }));
+      for (const f of snap.flares || []) alive.push({ x: f.x, y: f.y, vis: 4.5 * Math.min(1, f.left / 1.5), flare: true });
+      if (m && m.down && md) alive.push({ x: md.x, y: md.y, vis: 9, ghost: true }); // ghost sight: see more, but the living still decide what monsters are sent
       const visible = (x, y, pad = 0.5) => alive.some((p) => Math.hypot(p.x - x, p.y - y) <= p.vis + pad);
       const eye = S.profile && S.profile.items && S.profile.items.includes('eye');
 
@@ -520,8 +644,12 @@
       if (snap.item && visible(snap.item.x, snap.item.y)) drawRelic(snap.item.x * s, snap.item.y * s, s, time, snap.item.type);
       // monsters
       for (const mo of snap.monsters) { if (!mo.v) continue; const d = S.mon.get(mo.id); if (d) drawMonster(mo, d.x * s, d.y * s, s, time, d.ph, d.moving > 0); }
+      // flares
+      for (const f of snap.flares || []) drawFlare(f.x * s, f.y * s, s, time, f.left);
       // players
       for (const p of snap.players) { if (p.esc) continue; const d = S.disp.get(p.id); if (d) drawPlayer(p, d.x * s, d.y * s, s, time, d); }
+      // compass: a faint needle toward the nearest objective when the team has stalled
+      if (m && m.hint && md && !m.esc) drawCompass(md.x * s, md.y * s, s, m.hint[0], m.hint[1], time);
       // floaters
       for (const f of S.floaters) { f.t += dt; ctx.globalAlpha = Math.max(0, 1 - f.t / 1.4); ctx.fillStyle = f.color; ctx.font = `bold ${Math.round(s * 0.7)}px Georgia`; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x * s, f.y * s - f.t * s * 1.2); ctx.globalAlpha = 1; }
       S.floaters = S.floaters.filter((f) => f.t < 1.4);
@@ -537,10 +665,30 @@
         Audio.tick(nearest);
       }
       // down overlay
-      if (m && m.down) { ctx.fillStyle = `rgba(120,0,10,${0.25 + 0.1 * Math.sin(time * 2)})`; ctx.fillRect(0, 0, W, H); }
+      if (m && m.down) { ctx.fillStyle = `rgba(60,40,110,${0.18 + 0.06 * Math.sin(time * 2)})`; ctx.fillRect(0, 0, W, H); }
     } else ctx.restore();
   }
 
+  function drawFlare(x, y, s, time, left) {
+    ctx.save(); ctx.translate(x, y);
+    const a = Math.min(1, left / 1.5);
+    ctx.globalAlpha = a; ctx.shadowColor = '#ff6a3a'; ctx.shadowBlur = s * 1.5;
+    ctx.fillStyle = '#ffb347'; ctx.beginPath(); ctx.arc(0, 0, s * (0.16 + 0.04 * Math.sin(time * 30)), 0, 7); ctx.fill();
+    ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(255,180,80,.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, s * (1 + (time * 2 % 1) * 3), 0, 7); ctx.stroke();
+    ctx.restore();
+  }
+  function drawCompass(x, y, s, angle, kind, time) {
+    const u = Math.max(s, 22); // keep the needle readable on tiny tiles
+    const r = u * 1.3 + Math.sin(time * 4) * u * 0.1, pulse = 0.65 + 0.3 * Math.sin(time * 4);
+    const color = { key: '#e0b33c', fragment: '#c56bff', altar: '#ffd98a', exit: '#5ad17a' }[kind] || '#fff';
+    ctx.save(); ctx.translate(x, y); ctx.rotate(angle); ctx.globalAlpha = pulse;
+    ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = u * 0.8;
+    ctx.beginPath(); ctx.moveTo(r + u * 0.6, 0); ctx.lineTo(r, -u * 0.3); ctx.lineTo(r + u * 0.14, 0); ctx.lineTo(r, u * 0.3); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.restore();
+    ctx.save(); ctx.translate(x, y); ctx.globalAlpha = pulse * 0.9; ctx.fillStyle = color; ctx.font = `${Math.round(u * 0.42)}px Georgia`; ctx.textAlign = 'center'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+    ctx.fillText(kind, Math.cos(angle) * (r + u * 0.9), Math.sin(angle) * (r + u * 0.9) + u * 0.15); ctx.restore();
+  }
   function drawFog(alive, s, time) {
     const f = S.fogCanvas; if (!f) return;
     const fx = f.getContext('2d');
@@ -562,7 +710,9 @@
     for (const p of alive) {
       const r = p.vis * s * 0.9, x = p.x * s + S.cam.x, y = p.y * s + S.cam.y;
       const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, 'rgba(255,150,60,0.16)'); grad.addColorStop(1, 'rgba(255,150,60,0)');
+      if (p.flare) { grad.addColorStop(0, 'rgba(255,120,40,0.35)'); grad.addColorStop(1, 'rgba(255,120,40,0)'); }
+      else if (p.ghost) { grad.addColorStop(0, 'rgba(120,140,255,0.06)'); grad.addColorStop(1, 'rgba(120,140,255,0)'); }
+      else { grad.addColorStop(0, 'rgba(255,150,60,0.16)'); grad.addColorStop(1, 'rgba(255,150,60,0)'); }
       ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
     }
     ctx.globalCompositeOperation = 'source-over'; ctx.restore();
@@ -609,7 +759,8 @@
     } else {
       if (p.inv) { ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, s * 0.42 + Math.sin(time * 10) * 2, 0, 7); ctx.stroke(); }
       ctx.shadowColor = color; ctx.shadowBlur = s * 0.4;
-      const idx = S.room ? Math.max(0, S.room.players.findIndex((r) => r.id === p.id)) : 0;
+      const rp = S.room && S.room.players.find((r) => r.id === p.id);
+      const idx = rp ? (rp.survivor || 0) : 0;
       const pk = dirKey('player' + (idx % 3), p.fx, p.fy, frame);
       if (pk) { ctx.strokeStyle = color; ctx.globalAlpha = 0.55; ctx.lineWidth = Math.max(2, s * 0.07); ctx.beginPath(); ctx.ellipse(0, s * 0.3, s * 0.36, s * 0.16, 0, 0, 7); ctx.stroke(); ctx.globalAlpha = 1; ctx.shadowBlur = 0; sprite(pk, 0, -s * 0.25 - bob, s, 1.5); }
       else {
@@ -733,4 +884,5 @@
   }
 
   connect();
+  if (location.hash === '#debug') window.__nf = { showEvent, jumpScare }; // visual checks only
 })();

@@ -162,3 +162,89 @@ test('the cinematic hold ends once every player reports ready', () => {
   h.markReady('a'); h.removePlayer('b');
   assert.ok(h.warmup <= 4);
 });
+
+test('a seeded game is identical for everyone (Tonight mode)', () => {
+  const mk = () => new Game(3, [{ id: 'a', name: 'A', profile: { items: [] } }], () => {}, { seed: 4242, mode: 'tonight' });
+  const g1 = mk(), g2 = mk();
+  assert.strictEqual(g1.seed, 4242);
+  assert.deepStrictEqual(Array.from(g1.tiles), Array.from(g2.tiles));
+  assert.deepStrictEqual(g1.solution, g2.solution);
+  assert.deepStrictEqual(g1.monsters.map((m) => [m.type, m.x, m.y]), g2.monsters.map((m) => [m.type, m.x, m.y]));
+  assert.strictEqual(g1.initPacket().mode, 'tonight');
+});
+
+test('compass hint appears after idle time and points along a reachable path', () => {
+  const g = new Game(2, [{ id: 'a', name: 'A', profile: { items: [] } }], () => {}, { warmup: 0 });
+  g.monsters.length = 0;
+  const p = g.players.get('a');
+  for (let i = 0; i < 30 * 16; i++) g.step();
+  assert.ok(p.hint, 'hint set after 15 s without progress');
+  assert.ok(['key', 'fragment'].includes(p.hint.kind));
+  const snap = g.snapshot();
+  assert.ok(Array.isArray(snap.players[0].hint) && typeof snap.players[0].hint[0] === 'number');
+  // step one tile in the hinted direction: must be passable
+  const a = p.hint.a, tx = Math.floor(p.x + Math.cos(a) * 1), ty = Math.floor(p.y + Math.sin(a) * 1);
+  assert.notStrictEqual(g.tileAt(tx, ty), T.WALL, 'hint does not point into a wall');
+  // progress clears the hint
+  g.keys[0].taken = false; p.x = g.keys[0].x; p.y = g.keys[0].y; g.step();
+  assert.strictEqual(p.hint, null);
+});
+
+test('ghosts drift, drop flares on a cooldown, and flares reveal monsters', () => {
+  const g = new Game(1, [{ id: 'a', name: 'A', profile: { items: [] } }, { id: 'b', name: 'B', profile: { items: [] } }], () => {}, { warmup: 0 });
+  const a = g.players.get('a'), b = g.players.get('b');
+  g.monsters.length = 0;
+  a.down = true; a.invuln = 0;
+  g.dropFlare('b'); assert.strictEqual(g.flares.length, 0, 'living players cannot flare');
+  g.dropFlare('a'); assert.strictEqual(g.flares.length, 1);
+  g.dropFlare('a'); assert.strictEqual(g.flares.length, 1, 'cooldown');
+  assert.ok(g.snapshot().players[0].fc > 0);
+  // a monster far from everyone but near the flare is revealed
+  const m = g.makeMonster('zombie', a.x, a.y); g.monsters.push(m);
+  b.x = a.x + 20; b.y = a.y; // far away (may be in a wall; irrelevant for this check)
+  assert.ok(g.snapshot().monsters.some((mm) => mm.id === m.id && mm.v === 1), 'flare reveals the monster');
+  g.monsters.length = 0;
+  // ghost moves, slower than the living
+  const x0 = a.x; g.setInput('a', 1, 0); for (let i = 0; i < 30; i++) g.step();
+  assert.ok(a.x !== x0 || g.tileAt(Math.floor(x0) + 1, Math.floor(a.y)) === T.WALL, 'ghost drifted');
+});
+
+test('tension events fire, change the world, and end cleanly', () => {
+  const g = new Game(4, [{ id: 'a', name: 'A', profile: { items: [] } }], () => {}, { warmup: 0 });
+  g.monsters.length = 0; g.monsters.push(g.makeMonster('zombie', g.map.monsterSpots[0].x + 0.5, g.map.monsterSpots[0].y + 0.5));
+  const p = g.players.get('a'); p.invuln = 1e9;
+  const vis = p.vision, base = g.monsters[0].base;
+  // force each event type
+  g.eventQueue = [];
+  g.R = { rand: () => 0, pick: (arr) => arr[0], shuffle: (x) => x }; // deterministic: picks 'blackout'
+  g.startEvent(); assert.strictEqual(g.event_.type, 'blackout'); assert.ok(p.vision < vis);
+  for (let i = 0; i < 30 * 11; i++) g.step();
+  assert.strictEqual(g.event_, null); assert.strictEqual(p.vision, vis, 'vision restored');
+  g.R = { rand: () => 0.5, pick: (arr) => arr[Math.min(1, arr.length - 1)], shuffle: (x) => x }; // 'hunt'
+  g.startEvent(); assert.strictEqual(g.event_.type, 'hunt'); assert.ok(g.monsters[0].speed > base);
+  for (let i = 0; i < 30 * 16; i++) g.step();
+  assert.strictEqual(g.monsters[0].speed, base, 'speed restored');
+  // slam relocks an open door for 20 s
+  const d = g.doors[0]; d.open = true; p.x = d.x + 5.5; p.y = d.y + 0.5;
+  g.R = { rand: () => 0.9, pick: (arr) => arr[arr.length - 1], shuffle: (x) => x }; // 'slam'
+  g.startEvent(); assert.strictEqual(g.event_.type, 'slam'); assert.strictEqual(d.open, false);
+  assert.ok(g.snapshot().slam === d.keyId);
+  for (let i = 0; i < 30 * 21; i++) g.step();
+  assert.strictEqual(d.open, true, 'door reopens');
+});
+
+test('a close call awards bonus points and builds a streak; being caught resets it', () => {
+  const g = new Game(2, [{ id: 'a', name: 'A', profile: { items: [] } }], () => {}, { warmup: 0 });
+  const p = g.players.get('a'); p.invuln = 0;
+  g.monsters.length = 0;
+  const m = g.makeMonster('zombie', p.x + 1.0, p.y); m.speed = 0; m.base = 0; g.monsters.push(m);
+  g.step(); // within 1.15: marked near
+  m.x = p.x + 3; g.step(); // left without catching
+  assert.strictEqual(p.streak, 1); assert.ok(g.bonus > 0);
+  const ev = g.snapshot().events.find((e) => e.kind === 'closeCall'); assert.ok(ev && ev.pts === 100);
+  m.x = p.x + 1.0; g.step(); m.x = p.x + 3; g.step();
+  assert.strictEqual(p.streak, 2);
+  assert.ok(g.liveScore() >= 300);
+  m.x = p.x; g.step(); // caught
+  assert.ok(p.down); assert.strictEqual(p.streak, 0);
+});
