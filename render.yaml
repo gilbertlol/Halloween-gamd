@@ -5,7 +5,7 @@ services:
     name: nightfall
     runtime: node
     plan: free
-    branch: claude/halloween-escape-game-lvgd0w
+    branch: main
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
