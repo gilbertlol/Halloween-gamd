@@ -14,7 +14,8 @@
 
   <!-- ===================== LOBBY ===================== -->
   <section id="lobby" class="screen">
-    <video id="lobby-video" class="lobby-video" autoplay muted loop playsinline preload="auto" poster="">
+    <video id="lobby-video" class="lobby-video" autoplay muted loop playsinline preload="auto">
+      <source src="assets/video/intro-muted.mp4" type="video/mp4">
       <source src="assets/video/intro-muted.webm" type="video/webm">
     </video>
     <div class="fog-layer"></div>
@@ -157,11 +158,12 @@
 </div>
 <div id="lobby-error" class="toast hidden"></div>
 <div id="cinematic" class="cinematic hidden">
-  <video id="cinematic-video" playsinline preload="auto">
-    <source src="assets/video/intro.webm" type="video/webm">
+  <video id="cinematic-video" playsinline webkit-playsinline preload="none">
     <source src="assets/video/intro.mp4" type="video/mp4">
+    <source src="assets/video/intro.webm" type="video/webm">
   </video>
   <div id="cinematic-loading" class="loading hidden">Loading the night…</div>
+  <button id="btn-play-intro" class="play-intro hidden">▶&nbsp; Tap to play the intro</button>
   <button id="btn-skip" class="skip">Skip ▸</button>
 </div>
 <script src="assets.js"></script>

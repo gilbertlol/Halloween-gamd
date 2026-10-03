@@ -52,7 +52,11 @@ const server = http.createServer((req, res) => {
   if (!full.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
   fs.readFile(full, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    // assets (atlases, video, audio) are big and rarely change: let the browser keep them.
+    const isAsset = file.startsWith('/assets/') || file.startsWith('\\assets\\');
+    const isVideo = /\.(mp4|webm)$/i.test(file);
+    const cache = isVideo ? 'public, max-age=604800' : isAsset ? 'public, max-age=86400' : 'no-cache';
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', 'Cache-Control': cache, 'Content-Length': data.length });
     res.end(data);
   });
 });
