@@ -6,7 +6,7 @@ The shipped art is four atlases (generated with ChatGPT, see `HANDOFF.md`):
 
 | file | grid | contents |
 |---|---|---|
-| `characters.png` | 8 × 8 | rows: blue / amber / purple survivor, ghost, zombie, crawler, imp, demon. Column pairs: south, east, north, west (the game uses columns 0, 2, 4, 6). |
+| `characters.png` | 8 × 8 | rows: blue / amber / purple survivor, ghost, zombie, crawler, imp, demon. Column pairs: south, east, north, west; each pair is a two-frame walk cycle (`_s`/`_s2`, `_e`/`_e2`, …). |
 | `props.png` | 6 × 6 | keys, doors, gates, the rune portal (exit), chests, relics, pumpkins, gravestones, coffins, altar states, levers, plates |
 | `terrain.png` | 6 × 6 | stone / forest / wood floors, masonry walls, mud, water, webs, occult, moss, lava, bones, sigils |
 | `jumpscares.png` | 2 × 2 | ghost, zombie, crawler, demon faces (full-screen scares, picked by the monster that got you) |
@@ -40,9 +40,10 @@ while the cinematic plays; update that constant if the video length changes.
 
 ## Audio
 
-No audio files are included yet: every sound is synthesized. To add real
-sound, drop files in `audio/` and list them under `"audio"` in the manifest
-using the keys below.
+`audio/music.mp3` (the intro's string score, looped under the synth bed) and
+`audio/scream.mp3` (the jump-scare scream) are included. Everything else is
+synthesized. To add more, drop files in `audio/` and list them under `"audio"`
+in the manifest using the keys below.
 
 | key            | file                       | length    | plays when |
 |----------------|----------------------------|-----------|------------|

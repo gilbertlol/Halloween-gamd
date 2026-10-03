@@ -48,7 +48,8 @@ plays the same level at the same time.
   row or column and only turns at tile centres: zombies patrol, ghosts drift
   through walls toward you, crawlers wait and lunge, imps zig-zag and
   teleport, demons charge the moment you cross their line of sight.
-- **Sound that lies to you.** Ambient score and wind, random whispers,
+- **Sound that lies to you.** The intro's string score loops over a
+  synthesized drone and wind, random whispers,
   knocks and creaks, a heartbeat that quickens with proximity, positional
   monster voices panned and attenuated by distance, *phantom* monster sounds
   from empty corridors, and monsters that go silent for a while so they can
