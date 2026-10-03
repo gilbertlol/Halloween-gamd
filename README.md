@@ -28,6 +28,26 @@ plays the same level at the same time.
 
 ## Features
 
+- **Tonight's Night.** One seeded map per day for everyone, with its own
+  leaderboard that resets at midnight UTC. No unlock needed.
+- **Open rooms.** Rooms are public by default and listed in the lobby, so
+  strangers can join with one click; hosts can close a room to friends only.
+- **A whisper points the way.** After 15 seconds without team progress, a
+  compass needle shows each player the way to the nearest reachable key,
+  fragment, altar or exit, following the corridors.
+- **Ghosts stay in the game.** A downed player drifts as a ghost with wider
+  sight, can be revived wherever they are, and drops a flare every 30 s that
+  lights an area and reveals monsters for the team.
+- **Tension events.** One to three times a night: a blackout halves vision
+  for ten seconds, the bell tolls and everything hunts for fifteen, or a door
+  you opened slams locked for twenty.
+- **Close calls.** A monster that passes within a tile and misses you is a
+  close call: chime, bonus points, and a streak multiplier that resets when
+  you go down. Score is shown live.
+- **Share card.** The end screen draws a result card with copy-text, invite
+  link and save-image buttons.
+- **Survivors.** Three survivor looks unlock by surviving nights (cosmetic).
+
 - **Eight nights, Easy to Extreme.** Each level scales the clock, the map
   size, the number and speed of monsters, the vision radius, how many locked
   doors and rune fragments there are, and how often the jump scares hit.

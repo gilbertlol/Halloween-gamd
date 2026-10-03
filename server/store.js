@@ -40,7 +40,7 @@ class JsonStore {
   }
 }
 
-const scores = new JsonStore('scores.json', { entries: [] });
+const scores = new JsonStore('scores.json', { entries: [], daily: {} });
 const profiles = new JsonStore('profiles.json', { byName: {} });
 
 const MAX_SCORES = 100;
@@ -52,6 +52,22 @@ function addScore(entry) {
   scores.save();
 }
 
+function addDailyScore(date, entry) {
+  const d = scores.data.daily || (scores.data.daily = {});
+  const list = d[date] || (d[date] = []);
+  list.push(entry);
+  list.sort((a, b) => b.score - a.score || a.at - b.at);
+  list.length = Math.min(list.length, 50);
+  // keep a week of boards
+  for (const k of Object.keys(d)) if (k < date && Object.keys(d).length > 7) delete d[k];
+  scores.save();
+}
+
+function topDaily(date, limit = 10) {
+  const d = scores.data.daily || {};
+  return (d[date] || []).slice(0, limit);
+}
+
 function topScores(limit = 20) {
   return scores.data.entries.slice(0, limit);
 }
@@ -61,7 +77,7 @@ function normName(name) { return String(name || '').trim().toLowerCase(); }
 function getProfile(name) {
   const key = normName(name);
   if (!profiles.data.byName[key]) {
-    profiles.data.byName[key] = { name: String(name).trim(), unlocked: 1, items: [], wins: 0, best: 0 };
+    profiles.data.byName[key] = { name: String(name).trim(), unlocked: 1, items: [], wins: 0, best: 0, survivor: 0 };
     profiles.save();
   }
   return profiles.data.byName[key];
@@ -76,4 +92,4 @@ function updateProfile(name, fn) {
 
 function flushAll() { scores.flush(); profiles.flush(); }
 
-module.exports = { addScore, topScores, getProfile, updateProfile, flushAll };
+module.exports = { addScore, topScores, addDailyScore, topDaily, getProfile, updateProfile, flushAll };

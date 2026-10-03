@@ -307,6 +307,35 @@
     const f = A.ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 500; f.Q.value = 6; o.disconnect(); o.connect(f).connect(g);
     const tg = A.ctx.createGain(); tg.connect(sp.node); env(tg, t + 1.05, 0.005, 0.6, 0.2); noise(t + 1.05, t + 1.3, tg, 'lowpass', 250, 1);
   }
+  // close call: a bright rising two-note chime, higher with the streak
+  function closeCall(streak) {
+    if (!A.ready || playSample('closecall')) return;
+    const t = now(); const base = 880 * Math.pow(2, Math.min(4, streak - 1) / 12);
+    for (let i = 0; i < 2; i++) { const g = A.ctx.createGain(); g.connect(A.convolver); g.connect(A.sfx); env(g, t + i * 0.09, 0.005, 0.35, 0.35); osc('triangle', base * (i ? 1.5 : 1), t + i * 0.09, t + i * 0.09 + 0.4, g); }
+    const h = A.ctx.createGain(); h.connect(A.sfx); env(h, t, 0.005, 0.5, 0.12); const o = osc('sine', 60, t, t + 0.2, h); o.frequency.exponentialRampToValueAtTime(30, t + 0.15);
+  }
+  // tension events
+  function eventSound(type) {
+    if (!A.ready || playSample('event_' + type)) return;
+    const t = now();
+    if (type === 'blackout') { // the lamps die: electric buzz then a thud
+      const g = A.ctx.createGain(); g.connect(A.sfx); env(g, t, 0.02, 0.35, 0.6); const o = osc('sawtooth', 120, t, t + 0.7, g); o.frequency.exponentialRampToValueAtTime(30, t + 0.6);
+      const ng = A.ctx.createGain(); ng.connect(A.sfx); env(ng, t, 0.01, 0.3, 0.25); noise(t, t + 0.3, ng, 'bandpass', 3000, 2);
+      const b = A.ctx.createGain(); b.connect(A.sfx); env(b, t + 0.5, 0.01, 0.8, 0.5); const o2 = osc('sine', 70, t + 0.5, t + 1.1, b); o2.frequency.exponentialRampToValueAtTime(25, t + 1.0);
+    } else if (type === 'hunt') { bell(4); const g = A.ctx.createGain(); g.connect(A.sfx); env(g, t, 0.3, 0.3, 3); noise(t, t + 3.3, g, 'lowpass', 300, 1); }
+    else if (type === 'slam') { // iron door slam with a long rumble
+      const g = A.ctx.createGain(); g.connect(A.sfx); env(g, t, 0.003, 1, 0.5); noise(t, t + 0.6, g, 'lowpass', 500, 1);
+      const o = osc('sine', 90, t, t + 0.8, g); o.frequency.exponentialRampToValueAtTime(28, t + 0.6);
+      const r = A.ctx.createGain(); r.connect(A.convolver); r.connect(A.sfx); env(r, t + 0.05, 0.1, 0.25, 1.8); noise(t, t + 2, r, 'lowpass', 160, 1);
+    }
+  }
+  function flare(pos) {
+    if (!A.ready || playSample('flare', pos, 20)) return;
+    const t = now(); const sp = spatial(A.sfx, pos, 20);
+    const g = A.ctx.createGain(); g.connect(sp.node); env(g, t, 0.01, 0.5, 0.9); noise(t, t + 1, g, 'highpass', 1500, 0.7);
+    const o = osc('sine', 300, t, t + 0.5, g); o.frequency.exponentialRampToValueAtTime(1200, t + 0.3);
+  }
+  function hintWhisper() { if (!A.ready) return; whisper(null); }
   function bell(count = 3) {
     if (!A.ready || playSample('bell')) return;
     const t = now();
@@ -341,5 +370,5 @@
   function setListener(pos) { A.listener = pos; }
   function tick(nearestMonsterDist) { if (!A.ready) return; heartbeatTick(nearestMonsterDist); musicTick(); ambientTick(); }
 
-  window.NightAudio = { init, resume, startMusic, stopMusic, tick, monster, phantom, scream, pickup, door, bell, caught, wrong, victory, defeat, setMuted, setListener, whisper, knock, creak, get ready() { return A.ready; }, get ctx() { return A.ctx; } };
+  window.NightAudio = { init, resume, startMusic, stopMusic, tick, monster, phantom, scream, pickup, door, bell, caught, wrong, victory, defeat, setMuted, setListener, whisper, knock, creak, closeCall, eventSound, flare, hintWhisper, get ready() { return A.ready; }, get ctx() { return A.ctx; } };
 })();
