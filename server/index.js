@@ -13,8 +13,9 @@ const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
 const MAX_PLAYERS = 6;
 const SNAPSHOT_EVERY = 2; // ticks -> 15 snapshots/s
+const INTRO_SECONDS = 15; // length of assets/video/intro.webm
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'audio/ogg', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
 
 // ------------------------------------------------------------------ http
 const server = http.createServer((req, res) => {
@@ -55,6 +56,7 @@ class Room {
     this.game = null;
     this.timer = null;
     this.tick = 0;
+    this.introShown = false;
   }
   broadcast(msg, except) {
     const data = JSON.stringify(msg);
@@ -78,8 +80,11 @@ class Room {
     const level = Math.max(1, Math.min(this.level, this.maxUnlocked()));
     this.level = level;
     const roster = [...this.players.values()].map((c) => ({ id: c.id, name: c.name, profile: c.profile }));
+    // the cinematic plays once per room; the night stays frozen while it runs
+    const intro = !this.introShown;
+    this.introShown = true;
     try {
-      this.game = new Game(level, roster, (type, payload) => this.onGameEmit(type, payload));
+      this.game = new Game(level, roster, (type, payload) => this.onGameEmit(type, payload), { intro, warmup: intro ? INTRO_SECONDS + 2 : 4 });
     } catch (e) {
       console.error('[room] failed to start game', e);
       return this.broadcast({ t: 'error', msg: 'The map refused to be born. Try again.' });

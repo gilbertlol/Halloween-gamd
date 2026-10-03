@@ -14,6 +14,9 @@
 
   <!-- ===================== LOBBY ===================== -->
   <section id="lobby" class="screen">
+    <video id="lobby-video" class="lobby-video" autoplay muted loop playsinline preload="auto" poster="">
+      <source src="assets/video/intro-muted.webm" type="video/webm">
+    </video>
     <div class="fog-layer"></div>
     <header class="title">
       <h1>NIGHTFALL</h1>
@@ -92,11 +95,20 @@
       <button id="btn-act" class="act">E</button>
     </div>
 
+    <div id="cinematic" class="cinematic hidden">
+      <video id="cinematic-video" playsinline preload="auto">
+        <source src="assets/video/intro.webm" type="video/webm">
+        <source src="assets/video/intro.mp4" type="video/mp4">
+      </video>
+      <button id="btn-skip" class="skip">Skip ▸</button>
+    </div>
+
     <div id="intro" class="overlay hidden">
       <div class="card">
         <h2 id="intro-title"></h2>
         <p id="intro-text"></p>
         <p class="hint" id="intro-roster"></p>
+        <p id="intro-warm" class="warm"></p>
         <button id="btn-intro-ok" class="primary">I'm ready</button>
       </div>
     </div>

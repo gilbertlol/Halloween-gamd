@@ -12,8 +12,11 @@ let monsterSeq = 1;
 // One running level for one room full of players. Fully server authoritative:
 // clients only send movement intent and puzzle answers.
 class Game {
-  constructor(level, roomPlayers, emit) {
+  constructor(level, roomPlayers, emit, opts = {}) {
     this.level = level;
+    // warm-up: the night is frozen (no movement, no clock) while the intro plays
+    this.warmup = Number(opts.warmup) || 0;
+    this.intro = !!opts.intro;
     this.cfg = LEVELS[level - 1];
     this.emit = emit; // (type, payload) => broadcast to room
     this.seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
@@ -179,6 +182,7 @@ class Game {
     if (this.status !== 'running') return;
     const dt = TICK;
     this.tick++;
+    if (this.warmup > 0) { this.warmup -= dt; return; }
     this.elapsed += dt;
     this.timeLeft -= dt;
     if (this.timeLeft <= 0) { this.timeLeft = 0; return this.finish(false, 'The bell tolled. Time is up.'); }
@@ -506,6 +510,7 @@ class Game {
       exit: { x: this.exit.x, y: this.exit.y }, altar: this.altar,
       time: this.cfg.time, fragments: this.fragments.length, keys: this.keys.length,
       monsters: Object.keys(this.cfg.monsters), seed: this.seed,
+      cinematic: this.intro, warmup: Math.ceil(this.warmup),
     };
   }
 
@@ -527,7 +532,7 @@ class Game {
       monsters.push({ id: m.id, t: m.type, x: r2(m.x), y: r2(m.y), dx: m.dx, dy: m.dy, s: m.state, v: seen ? 1 : 0, q: m.silent ? 1 : 0 });
     }
     const snap = {
-      tick: this.tick, time: Math.ceil(this.timeLeft), players, monsters,
+      tick: this.tick, time: Math.ceil(this.timeLeft), warm: this.warmup > 0 ? Math.ceil(this.warmup) : 0, players, monsters,
       keys: this.keys.filter((k) => !k.taken).map((k) => ({ id: k.id, x: k.x, y: k.y })),
       frags: this.fragments.filter((f) => !f.taken).map((f) => ({ id: f.id, x: f.x, y: f.y })),
       got: this.fragments.filter((f) => f.taken).map((f) => ({ rune: f.rune, order: f.order })),

@@ -129,3 +129,18 @@ test('monsters stay in lanes and out of walls over a long simulation', () => {
   const snap = g.snapshot();
   assert.ok(snap.monsters.every((m) => m.v === 1 || m.q === 0), 'unseen silent monsters are never sent to clients');
 });
+
+test('the night is frozen during the warm-up, then runs', () => {
+  const g = new Game(1, [{ id: 'a', name: 'A', profile: { items: [] } }], () => {}, { intro: true, warmup: 2 });
+  g.setInput('a', 1, 0);
+  const p = g.players.get('a'), x0 = p.x, t0 = g.timeLeft;
+  for (let i = 0; i < 30; i++) g.step(); // 1 s of warm-up
+  assert.strictEqual(p.x, x0, 'no movement during warm-up');
+  assert.strictEqual(g.timeLeft, t0, 'clock does not tick during warm-up');
+  assert.ok(g.snapshot().warm > 0);
+  assert.strictEqual(g.initPacket().cinematic, true);
+  assert.strictEqual(typeof g.initPacket().intro, 'string', 'briefing text survives');
+  for (let i = 0; i < 60; i++) g.step();
+  assert.ok(g.timeLeft < t0, 'clock runs after warm-up');
+  assert.strictEqual(g.snapshot().warm, 0);
+});
