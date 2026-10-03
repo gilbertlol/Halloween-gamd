@@ -73,8 +73,17 @@ a built-in procedural fallback, so the game runs with no assets at all. See
 
 ## Deploy
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/gilbertlol/Halloween-gamd)
+
 Any Node host works (Render, Railway, Fly.io, a VPS). The server is a single
 process that serves the static client and the WebSocket on the same port.
+Config files are included for the three common free tiers:
+
+| Host | File | Notes |
+|---|---|---|
+| Render | `render.yaml` | free web service; sleeps after 15 min idle, no persistent disk on the free plan |
+| Fly.io | `fly.toml` | uses the Dockerfile and a 1 GB volume for scores and relics |
+| Railway | `railway.json` | Nixpacks build; add a volume mounted at `/app/data` |
 
 ```bash
 docker build -t nightfall .
