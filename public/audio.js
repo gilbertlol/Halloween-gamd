@@ -335,7 +335,7 @@
     const g = A.ctx.createGain(); g.connect(sp.node); env(g, t, 0.01, 0.5, 0.9); noise(t, t + 1, g, 'highpass', 1500, 0.7);
     const o = osc('sine', 300, t, t + 0.5, g); o.frequency.exponentialRampToValueAtTime(1200, t + 0.3);
   }
-  function hintWhisper() { if (!A.ready) return; whisper(null); }
+  function hintWhisper() { if (!A.ready || playSample('hint')) return; whisper(null); }
   function bell(count = 3) {
     if (!A.ready || playSample('bell')) return;
     const t = now();
