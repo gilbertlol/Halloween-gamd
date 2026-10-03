@@ -15,11 +15,15 @@
     return true;
   }
   // Pick a directional sprite key (type_s / type_e / type_n / type_w) with fallbacks.
-  function dirKey(base, dx, dy) {
+  function dirKey(base, dx, dy, frame) {
     const d = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'w' : dx > 0 ? 'e' : 's') : (dy < 0 ? 'n' : 's');
-    for (const k of [`${base}_${d}`, `${base}_s`, base]) if (Assets.has(k)) return k;
+    const keys = frame ? [`${base}_${d}2`, `${base}_${d}`, `${base}_s2`, `${base}_s`, base] : [`${base}_${d}`, `${base}_s`, base];
+    for (const k of keys) if (Assets.has(k)) return k;
     return null;
   }
+  // Walk cycle: the sheet has two poses per facing; alternate them while moving.
+  const WALK_FPS = 7;
+  function walkFrame(time, ph) { return Math.floor(time * WALK_FPS + (ph || 0)) % 2; }
   function theme() { return S.game && Assets.themes ? Assets.themes[String(S.game.level)] : null; }
 
   const KEY_COLORS = ['#e0b33c', '#3fa7d6', '#d64a6a', '#5ad17a', '#b67ae6', '#f0f0f0'];
@@ -55,7 +59,7 @@
   function onMessage(m) {
     switch (m.t) {
       case 'hello': S.id = m.id; S.levels = m.levels; S.itemsMeta = m.items; renderScores($('#scores-table tbody'), m.scores); break;
-      case 'joined': S.profile = m.profile; $('#room-code-display').textContent = m.code; $('#join-panel').classList.add('hidden'); $('#room-panel').classList.remove('hidden'); $('#scores-panel').classList.add('full'); break;
+      case 'joined': S.profile = m.profile; Audio.startMusic(); $('#room-code-display').textContent = m.code; $('#join-panel').classList.add('hidden'); $('#room-panel').classList.remove('hidden'); $('#scores-panel').classList.add('full'); break;
       case 'room': S.room = m; renderRoom(); break;
       case 'left': S.room = null; $('#room-panel').classList.add('hidden'); $('#join-panel').classList.remove('hidden'); $('#scores-panel').classList.remove('full'); break;
       case 'error': toast(m.msg); break;
@@ -158,7 +162,7 @@
     $('#touch').classList.toggle('hidden', !('ontouchstart' in window));
     resize();
     Audio.init(); Audio.resume();
-    if (init.cinematic) playCinematic(); else { $('#intro').classList.remove('hidden'); Audio.startMusic(); }
+    if (init.cinematic) { Audio.stopMusic(); playCinematic(); } else { $('#intro').classList.remove('hidden'); Audio.startMusic(); }
     if (!S.raf) loop(performance.now());
   }
   $('#btn-intro-ok').onclick = () => { $('#intro').classList.add('hidden'); Audio.resume(); };
@@ -184,8 +188,8 @@
 
   function leaveGameUI() {
     S.game = null; S.snap = null;
-    Audio.stopMusic();
     $('#cinematic').classList.add('hidden'); try { $('#cinematic-video').pause(); $('#lobby-video').play(); } catch (e) { /* ignore */ }
+    Audio.startMusic();
     $('#game').classList.add('hidden'); $('#lobby').classList.remove('hidden');
     $('#game').classList.remove('shake');
     renderRoom();
@@ -411,14 +415,19 @@
     const s = S.snap; if (!s) return;
     const k = 1 - Math.exp(-dt * 14);
     for (const p of s.players) {
-      let d = S.disp.get(p.id); if (!d || Math.hypot(d.x - p.x, d.y - p.y) > 3) { d = { x: p.x, y: p.y }; S.disp.set(p.id, d); }
+      let d = S.disp.get(p.id); if (!d || Math.hypot(d.x - p.x, d.y - p.y) > 3) { d = { x: p.x, y: p.y, ph: Math.random() * 7, moving: 0 }; S.disp.set(p.id, d); }
+      const ox = d.x, oy = d.y;
       d.x += (p.x - d.x) * k; d.y += (p.y - d.y) * k;
+      // "moving" decays so a single stale snapshot does not freeze the walk cycle
+      d.moving = Math.hypot(d.x - ox, d.y - oy) > 0.004 ? 1 : Math.max(0, d.moving - dt * 6);
     }
     const seen = new Set();
     for (const m of s.monsters) {
       seen.add(m.id);
-      let d = S.mon.get(m.id); if (!d || Math.hypot(d.x - m.x, d.y - m.y) > 3) { d = { x: m.x, y: m.y, ph: Math.random() * 7 }; S.mon.set(m.id, d); }
+      let d = S.mon.get(m.id); if (!d || Math.hypot(d.x - m.x, d.y - m.y) > 3) { d = { x: m.x, y: m.y, ph: Math.random() * 7, moving: 1 }; S.mon.set(m.id, d); }
+      const ox = d.x, oy = d.y;
       d.x += (m.x - d.x) * k; d.y += (m.y - d.y) * k;
+      d.moving = Math.hypot(d.x - ox, d.y - oy) > 0.004 ? 1 : Math.max(0, d.moving - dt * 6);
     }
     for (const id of S.mon.keys()) if (!seen.has(id)) S.mon.delete(id);
   }
@@ -497,9 +506,9 @@
       for (const f of snap.frags) if (eye || visible(f.x, f.y)) drawFragment(f.x * s, f.y * s, s, time, !visible(f.x, f.y));
       if (snap.item && visible(snap.item.x, snap.item.y)) drawRelic(snap.item.x * s, snap.item.y * s, s, time, snap.item.type);
       // monsters
-      for (const mo of snap.monsters) { if (!mo.v) continue; const d = S.mon.get(mo.id); if (d) drawMonster(mo, d.x * s, d.y * s, s, time, d.ph); }
+      for (const mo of snap.monsters) { if (!mo.v) continue; const d = S.mon.get(mo.id); if (d) drawMonster(mo, d.x * s, d.y * s, s, time, d.ph, d.moving > 0); }
       // players
-      for (const p of snap.players) { if (p.esc) continue; const d = S.disp.get(p.id); if (d) drawPlayer(p, d.x * s, d.y * s, s, time); }
+      for (const p of snap.players) { if (p.esc) continue; const d = S.disp.get(p.id); if (d) drawPlayer(p, d.x * s, d.y * s, s, time, d); }
       // floaters
       for (const f of S.floaters) { f.t += dt; ctx.globalAlpha = Math.max(0, 1 - f.t / 1.4); ctx.fillStyle = f.color; ctx.font = `bold ${Math.round(s * 0.7)}px Georgia`; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x * s, f.y * s - f.t * s * 1.2); ctx.globalAlpha = 1; }
       S.floaters = S.floaters.filter((f) => f.t < 1.4);
@@ -575,8 +584,10 @@
     ctx.fillStyle = '#d4a017'; ctx.fillRect(-s * 0.32, -s * 0.22, s * 0.64, s * 0.1); ctx.fillRect(-s * 0.06, -s * 0.1, s * 0.12, s * 0.16);
     ctx.restore();
   }
-  function drawPlayer(p, x, y, s, time) {
+  function drawPlayer(p, x, y, s, time, d) {
     const color = S.playerColor.get(p.id) || '#fff';
+    const moving = d && d.moving > 0, frame = moving ? walkFrame(time, d.ph) : 0;
+    const bob = moving ? Math.abs(Math.sin(time * WALK_FPS * Math.PI + (d.ph || 0))) * s * 0.06 : 0;
     ctx.save(); ctx.translate(x, y);
     if (p.down) {
       ctx.globalAlpha = 0.8; ctx.fillStyle = '#444'; ctx.beginPath(); ctx.arc(0, 0, s * 0.3, 0, 7); ctx.fill();
@@ -586,8 +597,8 @@
       if (p.inv) { ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, s * 0.42 + Math.sin(time * 10) * 2, 0, 7); ctx.stroke(); }
       ctx.shadowColor = color; ctx.shadowBlur = s * 0.4;
       const idx = S.room ? Math.max(0, S.room.players.findIndex((r) => r.id === p.id)) : 0;
-      const pk = dirKey('player' + (idx % 3), p.fx, p.fy);
-      if (pk) { ctx.strokeStyle = color; ctx.globalAlpha = 0.55; ctx.lineWidth = Math.max(2, s * 0.07); ctx.beginPath(); ctx.ellipse(0, s * 0.3, s * 0.36, s * 0.16, 0, 0, 7); ctx.stroke(); ctx.globalAlpha = 1; ctx.shadowBlur = 0; sprite(pk, 0, -s * 0.25, s, 1.5); }
+      const pk = dirKey('player' + (idx % 3), p.fx, p.fy, frame);
+      if (pk) { ctx.strokeStyle = color; ctx.globalAlpha = 0.55; ctx.lineWidth = Math.max(2, s * 0.07); ctx.beginPath(); ctx.ellipse(0, s * 0.3, s * 0.36, s * 0.16, 0, 0, 7); ctx.stroke(); ctx.globalAlpha = 1; ctx.shadowBlur = 0; sprite(pk, 0, -s * 0.25 - bob, s, 1.5); }
       else {
       ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, s * 0.3, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
       ctx.fillStyle = '#1a1020'; ctx.beginPath(); ctx.arc(p.fx * s * 0.12 - s * 0.07, p.fy * s * 0.12 - s * 0.03, s * 0.05, 0, 7); ctx.arc(p.fx * s * 0.12 + s * 0.07, p.fy * s * 0.12 - s * 0.03, s * 0.05, 0, 7); ctx.fill();
@@ -597,10 +608,12 @@
     ctx.fillText(nameOf(p.id), 0, -s * 0.95);
     ctx.restore();
   }
-  function drawMonster(mo, x, y, s, time, ph) {
+  function drawMonster(mo, x, y, s, time, ph, moving) {
     ctx.save(); ctx.translate(x, y);
     const bob = Math.sin(time * 6 + ph) * s * 0.05;
-    const skey = dirKey(mo.t, mo.dx, mo.dy);
+    const still = mo.t === 'crawler' && mo.s === 'wait';
+    const frame = moving && !still ? walkFrame(time + (mo.s === 'dash' || mo.s === 'chase' ? time : 0), ph) : 0;
+    const skey = dirKey(mo.t, mo.dx, mo.dy, frame);
     if (skey) {
       let size = { zombie: 1.5, ghost: 1.7, crawler: 1.5, imp: 1.15, demon: 2.2 }[mo.t] || 1.4;
       if (mo.t === 'crawler' && mo.s === 'dash') size = 1.8;

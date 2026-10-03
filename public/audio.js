@@ -14,8 +14,8 @@
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     A.ctx = new Ctx();
-    A.master = A.ctx.createGain(); A.master.gain.value = A.muted ? 0 : 0.9; A.master.connect(A.ctx.destination);
-    A.music = A.ctx.createGain(); A.music.gain.value = 0.55; A.music.connect(A.master);
+    A.master = A.ctx.createGain(); A.master.gain.value = A.muted ? 0 : 1.0; A.master.connect(A.ctx.destination);
+    A.music = A.ctx.createGain(); A.music.gain.value = 0.85; A.music.connect(A.master);
     A.sfx = A.ctx.createGain(); A.sfx.gain.value = 1; A.sfx.connect(A.master);
     // cheap reverb for ghosts and the altar
     A.convolver = A.ctx.createConvolver();
@@ -89,21 +89,14 @@
   function startMusic() {
     if (!A.ready || drone) return;
     const t = now();
-    const sample = window.NightAssets && window.NightAssets.sample('music');
-    if (sample) {
-      const bus = A.ctx.createGain(); bus.gain.value = 0; bus.connect(A.music); bus.gain.linearRampToValueAtTime(1, t + 3);
-      const src = A.ctx.createBufferSource(); src.buffer = sample; src.loop = true; src.connect(bus); src.start();
-      drone = { bus, sample: true, voices: [], src };
-      A.musicTimer = t + 3;
-      return;
-    }
+
     const bus = A.ctx.createGain(); bus.gain.value = 0; bus.connect(A.music);
     bus.gain.linearRampToValueAtTime(1, t + 4);
-    const lp = A.ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220; lp.connect(bus);
+    const lp = A.ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 380; lp.connect(bus);
     const voices = [];
     for (const [f, type] of [[55, 'sawtooth'], [55.4, 'sawtooth'], [82.4, 'triangle'], [27.5, 'sine']]) {
       const o = A.ctx.createOscillator(); o.type = type; o.frequency.value = f;
-      const g = A.ctx.createGain(); g.gain.value = type === 'sine' ? 0.5 : 0.12;
+      const g = A.ctx.createGain(); g.gain.value = type === 'sine' ? 0.6 : 0.22;
       o.connect(g).connect(lp); o.start(); voices.push(o);
     }
     const lfo = A.ctx.createOscillator(); lfo.frequency.value = 0.07;
@@ -111,9 +104,16 @@
     // wind
     const wind = noise(t, t + 1e6, bus, 'bandpass', 500, 0.6);
     wind.src.stop(t + 36000);
-    const wg = A.ctx.createGain(); wg.gain.value = 0.18; wind.filter.disconnect(); wind.filter.connect(wg).connect(bus);
+    const wg = A.ctx.createGain(); wg.gain.value = 0.32; wind.filter.disconnect(); wind.filter.connect(wg).connect(bus);
     const wlfo = A.ctx.createOscillator(); wlfo.frequency.value = 0.11; const wlg = A.ctx.createGain(); wlg.gain.value = 350; wlfo.connect(wlg).connect(wind.filter.frequency); wlfo.start();
     drone = { bus, lp, voices, lfo, wlfo, wind, wg, root: 55 };
+    // the recorded score, when present, loops on top of the synth bed
+    const sample = window.NightAssets && window.NightAssets.sample('music');
+    if (sample) {
+      const sg = A.ctx.createGain(); sg.gain.value = 0.7; sg.connect(bus);
+      const src = A.ctx.createBufferSource(); src.buffer = sample; src.loop = true; src.connect(sg); src.start();
+      drone.src = src; drone.sample = true;
+    }
     A.musicTimer = t + 3;
   }
   function stopMusic() {
@@ -121,7 +121,7 @@
     const t = now();
     drone.bus.gain.cancelScheduledValues(t); drone.bus.gain.setValueAtTime(drone.bus.gain.value, t); drone.bus.gain.linearRampToValueAtTime(0, t + 1.5);
     const d = drone; drone = null;
-    setTimeout(() => { try { if (d.sample) { d.src.stop(); return; } d.voices.forEach((o) => o.stop()); d.lfo.stop(); d.wlfo.stop(); d.wind.src.stop(); } catch (e) { /* already stopped */ } }, 1800);
+    setTimeout(() => { try { if (d.src) d.src.stop(); d.voices.forEach((o) => o.stop()); d.lfo.stop(); d.wlfo.stop(); d.wind.src.stop(); } catch (e) { /* already stopped */ } }, 1800);
   }
   // Sparse, mournful pad notes; more and higher as intensity rises.
   function musicTick() {
@@ -130,23 +130,23 @@
     if (t < A.musicTimer) return;
     const inten = A.intensity;
     A.musicTimer = t + (inten > 0.6 ? 1.2 + Math.random() * 1.5 : 3 + Math.random() * 5);
-    if (drone.sample) { if (inten > 0.75 && Math.random() < 0.6) pulse(t); return; }
-    drone.lp.frequency.setTargetAtTime(220 + inten * 900, t, 1.5);
+    drone.lp.frequency.setTargetAtTime(380 + inten * 900, t, 1.5);
+    if (drone.sample && inten < 0.5 && Math.random() < 0.6) return; // let the score breathe
     const deg = SCALE[Math.floor(Math.random() * SCALE.length)];
     const octave = Math.random() < 0.3 + inten * 0.4 ? 2 : 1;
     const f = drone.root * Math.pow(2, deg / 12) * octave * 2;
     const g = A.ctx.createGain(); g.connect(A.convolver); g.connect(A.music);
-    env(g, t, 1.2, 0.06 + inten * 0.05, 3.5 + Math.random() * 2);
+    env(g, t, 1.2, 0.11 + inten * 0.08, 3.5 + Math.random() * 2);
     const o = osc(Math.random() < 0.5 ? 'sine' : 'triangle', f, t, t + 7, g);
     o.detune.setValueAtTime(-8 + Math.random() * 16, t);
     if (inten > 0.5 && Math.random() < 0.5) { // dissonant partner
-      const g2 = A.ctx.createGain(); g2.connect(A.music); env(g2, t + 0.3, 0.8, 0.035, 3);
+      const g2 = A.ctx.createGain(); g2.connect(A.music); env(g2, t + 0.3, 0.8, 0.06, 3);
       osc('sine', f * Math.pow(2, 1 / 12), t + 0.3, t + 6, g2);
     }
     if (inten > 0.75 && Math.random() < 0.6) pulse(t); // low war-drum pulse when danger is near
   }
   function pulse(t) {
-    const g = A.ctx.createGain(); g.connect(A.music); env(g, t, 0.01, 0.5, 0.35);
+    const g = A.ctx.createGain(); g.connect(A.music); env(g, t, 0.01, 0.7, 0.35);
     const o = osc('sine', 48, t, t + 0.5, g); o.frequency.exponentialRampToValueAtTime(30, t + 0.4);
   }
 
@@ -337,7 +337,7 @@
     const t = now();
     [12, 7, 3, 0].forEach((semi, i) => { const g = A.ctx.createGain(); g.connect(A.convolver); g.connect(A.sfx); env(g, t + i * 0.6, 0.05, 0.3, 2.2); osc('sawtooth', 110 * Math.pow(2, semi / 12), t + i * 0.6, t + i * 0.6 + 2.5, g); });
   }
-  function setMuted(m) { A.muted = m; if (A.master) A.master.gain.setTargetAtTime(m ? 0 : 0.9, now(), 0.05); }
+  function setMuted(m) { A.muted = m; if (A.master) A.master.gain.setTargetAtTime(m ? 0 : 1.0, now(), 0.05); }
   function setListener(pos) { A.listener = pos; }
   function tick(nearestMonsterDist) { if (!A.ready) return; heartbeatTick(nearestMonsterDist); musicTick(); ambientTick(); }
 
