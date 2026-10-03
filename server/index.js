@@ -1,0 +1,276 @@
+'use strict';
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { WebSocketServer } = require('ws');
+const { Game, TICK } = require('./game');
+const { LEVELS, ITEMS } = require('./levels');
+const store = require('./store');
+
+const PORT = Number(process.env.PORT) || 3000;
+const PUBLIC = path.join(__dirname, '..', 'public');
+const MAX_PLAYERS = 6;
+const SNAPSHOT_EVERY = 2; // ticks -> 15 snapshots/s
+
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
+
+// ------------------------------------------------------------------ http
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/api/scores') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify(store.topScores(50)));
+  }
+  if (url.pathname === '/healthz') { res.writeHead(200); return res.end('ok'); }
+  let file = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
+  if (file === '/' || file === '\\') file = '/index.html';
+  const full = path.join(PUBLIC, file);
+  if (!full.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
+  fs.readFile(full, (err, data) => {
+    if (err) { res.writeHead(404); return res.end('Not found'); }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    res.end(data);
+  });
+});
+
+// ------------------------------------------------------------------ rooms
+const rooms = new Map(); // code -> Room
+const clients = new Map(); // ws -> Client
+
+function roomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  do { c = ''; for (let i = 0; i < 4; i++) c += alphabet[crypto.randomInt(alphabet.length)]; } while (rooms.has(c));
+  return c;
+}
+
+class Room {
+  constructor(code) {
+    this.code = code;
+    this.players = new Map(); // id -> Client
+    this.hostId = null;
+    this.level = 1;
+    this.game = null;
+    this.timer = null;
+    this.tick = 0;
+  }
+  broadcast(msg, except) {
+    const data = JSON.stringify(msg);
+    for (const c of this.players.values()) if (c !== except && c.ws.readyState === 1) c.ws.send(data);
+  }
+  maxUnlocked() {
+    let m = 1;
+    for (const c of this.players.values()) m = Math.max(m, c.profile.unlocked);
+    return Math.min(m, LEVELS.length);
+  }
+  lobbyPacket() {
+    return {
+      t: 'room', code: this.code, host: this.hostId, level: this.level, unlocked: this.maxUnlocked(), inGame: !!this.game,
+      players: [...this.players.values()].map((c) => ({ id: c.id, name: c.name, items: c.profile.items, unlocked: c.profile.unlocked, wins: c.profile.wins })),
+    };
+  }
+  sendLobby() { this.broadcast(this.lobbyPacket()); }
+
+  start() {
+    if (this.game) return;
+    const level = Math.max(1, Math.min(this.level, this.maxUnlocked()));
+    this.level = level;
+    const roster = [...this.players.values()].map((c) => ({ id: c.id, name: c.name, profile: c.profile }));
+    try {
+      this.game = new Game(level, roster, (type, payload) => this.onGameEmit(type, payload));
+    } catch (e) {
+      console.error('[room] failed to start game', e);
+      return this.broadcast({ t: 'error', msg: 'The map refused to be born. Try again.' });
+    }
+    this.broadcast({ t: 'start', ...this.game.initPacket() });
+    this.tick = 0;
+    this.timer = setInterval(() => this.loop(), TICK * 1000);
+  }
+
+  loop() {
+    const g = this.game;
+    if (!g) return;
+    g.step();
+    this.tick++;
+    if (g.status !== 'running') { this.stopLoop(); return; }
+    if (this.tick % SNAPSHOT_EVERY === 0) {
+      const snap = g.snapshot();
+      this.handleEvents(snap.events);
+      this.broadcast({ t: 'state', ...snap });
+    }
+  }
+
+  // Persist item pickups immediately so a disconnect does not lose the relic.
+  handleEvents(events) {
+    for (const e of events) {
+      if (e.kind === 'item') {
+        const c = this.players.get(e.byId);
+        if (c) {
+          c.profile = store.updateProfile(c.name, (p) => { if (!p.items.includes(e.item)) p.items.push(e.item); });
+          e.itemName = ITEMS[e.item] ? ITEMS[e.item].name : e.item;
+          e.itemDesc = ITEMS[e.item] ? ITEMS[e.item].desc : '';
+        }
+      }
+    }
+  }
+
+  onGameEmit(type, result) {
+    if (type !== 'finished') return;
+    const g = this.game;
+    // flush remaining events with the final snapshot
+    const snap = g.snapshot();
+    this.handleEvents(snap.events);
+    this.broadcast({ t: 'state', ...snap });
+    const names = [...this.players.values()].map((c) => c.name);
+    if (!names.length) { // everyone left mid-night: nothing to record
+      this.stopLoop(); this.game = null; return;
+    }
+    if (result.won) {
+      for (const c of this.players.values()) {
+        c.profile = store.updateProfile(c.name, (p) => {
+          p.unlocked = Math.max(p.unlocked, Math.min(LEVELS.length, g.level + 1));
+          p.wins++;
+          p.best = Math.max(p.best, result.score);
+        });
+      }
+    }
+    if (result.won || result.elapsed >= 30) store.addScore({ team: names, score: result.score, level: g.level, levelName: g.levelName || result.levelName, won: result.won, escaped: result.escaped, timeLeft: result.timeLeft, at: Date.now() });
+    this.broadcast({ t: 'end', ...result, scores: store.topScores(20), unlocked: this.maxUnlocked() });
+    this.stopLoop();
+    this.game = null;
+    this.sendLobby();
+  }
+
+  stopLoop() { if (this.timer) { clearInterval(this.timer); this.timer = null; } }
+
+  remove(client) {
+    this.players.delete(client.id);
+    if (this.game) this.game.removePlayer(client.id);
+    if (this.players.size === 0) {
+      this.stopLoop();
+      this.game = null;
+      rooms.delete(this.code);
+      return;
+    }
+    if (this.hostId === client.id) this.hostId = this.players.keys().next().value;
+    this.sendLobby();
+  }
+}
+
+// ------------------------------------------------------------------ ws
+const wss = new WebSocketServer({ server, maxPayload: 16 * 1024 });
+
+wss.on('connection', (ws) => {
+  const client = { ws, id: crypto.randomBytes(6).toString('hex'), name: null, room: null, profile: null, lastInput: 0 };
+  clients.set(ws, client);
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
+  send(ws, { t: 'hello', id: client.id, levels: LEVELS.map(publicLevel), items: ITEMS, scores: store.topScores(20) });
+
+  ws.on('message', (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+    if (!msg || typeof msg.t !== 'string') return;
+    try { handle(client, msg); } catch (e) { console.error('[ws] handler error', e); }
+  });
+
+  ws.on('close', () => {
+    clients.delete(ws);
+    if (client.room) client.room.remove(client);
+  });
+});
+
+function publicLevel(L) {
+  return { n: L.n, name: L.name, difficulty: L.difficulty, time: L.time, monsters: L.monsters, vision: L.vision, keys: L.keys, fragments: L.fragments, item: L.item, intro: L.intro };
+}
+
+function send(ws, msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+
+function cleanName(n) {
+  const s = String(n || '').replace(/[^\p{L}\p{N} _.'-]/gu, '').trim().slice(0, 16);
+  return s || 'Stranger';
+}
+
+function handle(c, msg) {
+  switch (msg.t) {
+    case 'join': {
+      if (c.room) c.room.remove(c);
+      c.name = cleanName(msg.name);
+      c.profile = store.getProfile(c.name);
+      let room;
+      if (msg.room) {
+        room = rooms.get(String(msg.room).toUpperCase().trim());
+        if (!room) return send(c.ws, { t: 'error', msg: 'No such room. The house is empty.' });
+        if (room.players.size >= MAX_PLAYERS) return send(c.ws, { t: 'error', msg: 'That room is full.' });
+        if (room.game) return send(c.ws, { t: 'error', msg: 'A night is already underway in that room. Wait for it to end.' });
+      } else {
+        room = new Room(roomCode());
+        rooms.set(room.code, room);
+      }
+      c.room = room;
+      room.players.set(c.id, c);
+      if (!room.hostId) room.hostId = c.id;
+      send(c.ws, { t: 'joined', code: room.code, id: c.id, profile: c.profile });
+      room.sendLobby();
+      break;
+    }
+    case 'leave': {
+      if (c.room) { c.room.remove(c); c.room = null; }
+      send(c.ws, { t: 'left' });
+      break;
+    }
+    case 'setLevel': {
+      const r = c.room; if (!r || r.hostId !== c.id || r.game) return;
+      const lv = Number(msg.level) | 0;
+      if (lv >= 1 && lv <= r.maxUnlocked()) { r.level = lv; r.sendLobby(); }
+      break;
+    }
+    case 'start': {
+      const r = c.room; if (!r || r.hostId !== c.id || r.game) return;
+      r.start();
+      break;
+    }
+    case 'input': {
+      const r = c.room; if (!r || !r.game) return;
+      r.game.setInput(c.id, msg.dx, msg.dy);
+      break;
+    }
+    case 'solve': {
+      const r = c.room; if (!r || !r.game) return;
+      r.game.trySolve(c.id, Array.isArray(msg.seq) ? msg.seq.slice(0, 12).map(String) : []);
+      break;
+    }
+    case 'scores':
+      send(c.ws, { t: 'scores', scores: store.topScores(50) });
+      break;
+    case 'ping':
+      send(c.ws, { t: 'pong', ts: msg.ts });
+      break;
+    default:
+      break;
+  }
+}
+
+// heartbeat: drop dead sockets
+const hb = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 30000);
+
+server.listen(PORT, () => console.log(`Nightfall is listening on http://localhost:${PORT}`));
+
+function shutdown() {
+  clearInterval(hb);
+  store.flushAll();
+  for (const r of rooms.values()) r.stopLoop();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

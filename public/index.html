@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Nightfall — co-op horror escape</title>
+<meta name="description" content="Nightfall: a 2D online co-op horror escape game. Outrun the monsters, find the keys, solve the mystery, escape the night.">
+<meta name="theme-color" content="#050308">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23f28c28'/%3E%3Cpath d='M9 11l4 4-4 4zM23 11l-4 4 4 4zM9 22q7 6 14 0' fill='%23050308' stroke='%23050308' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===================== LOBBY ===================== -->
+  <section id="lobby" class="screen">
+    <div class="fog-layer"></div>
+    <header class="title">
+      <h1>NIGHTFALL</h1>
+      <p class="tagline">They cannot be fought. Only outrun.</p>
+    </header>
+
+    <div class="lobby-grid">
+      <div class="panel" id="join-panel">
+        <h2>Enter the night</h2>
+        <label>Your name<input id="name" maxlength="16" placeholder="Stranger" autocomplete="off"></label>
+        <div class="row">
+          <button id="btn-create" class="primary">Create room</button>
+        </div>
+        <div class="row">
+          <input id="room-code" maxlength="4" placeholder="ROOM CODE" autocomplete="off" style="text-transform:uppercase">
+          <button id="btn-join">Join</button>
+        </div>
+        <p class="hint">Up to 6 souls per room. Share the code with your friends and survive together: if the monsters take all of you, the night wins.</p>
+        <p class="hint small">Move with WASD / arrows or touch. Walk into a door with its key to open it. Press <b>E</b> at the altar once every rune fragment is found.</p>
+      </div>
+
+      <div class="panel hidden" id="room-panel">
+        <h2>Room <span id="room-code-display" class="code"></span></h2>
+        <div class="room-cols">
+          <div>
+            <h3>Souls present</h3>
+            <ul id="player-list"></ul>
+            <h3>Your relics</h3>
+            <ul id="relic-list" class="relics"></ul>
+          </div>
+          <div>
+            <h3>Choose the night</h3>
+            <div id="level-grid" class="level-grid"></div>
+            <div id="level-info" class="level-info"></div>
+          </div>
+        </div>
+        <div class="row">
+          <button id="btn-start" class="primary">Begin the night</button>
+          <button id="btn-leave">Leave</button>
+          <span id="host-note" class="hint"></span>
+        </div>
+      </div>
+
+      <div class="panel" id="scores-panel">
+        <h2>Hall of the Survived</h2>
+        <table id="scores-table">
+          <thead><tr><th>#</th><th>Team</th><th>Night</th><th>Score</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="lobby-error" class="toast hidden"></div>
+  </section>
+
+  <!-- ===================== GAME ===================== -->
+  <section id="game" class="screen hidden">
+    <canvas id="canvas"></canvas>
+    <div id="hud">
+      <div class="hud-top">
+        <div class="hud-level"><span id="hud-level-name"></span><span id="hud-difficulty" class="pill"></span></div>
+        <div id="hud-timer" class="hud-timer">00:00</div>
+        <div class="hud-right">
+          <div id="hud-keys" class="hud-keys" title="Keys found"></div>
+          <div id="hud-runes" class="hud-runes" title="Rune fragments"></div>
+        </div>
+      </div>
+      <div id="hud-players" class="hud-players"></div>
+      <div id="hud-objective" class="hud-objective"></div>
+      <div id="hud-log" class="hud-log"></div>
+      <div id="hud-prompt" class="hud-prompt hidden"></div>
+      <div id="hud-escape" class="hud-escape hidden"></div>
+      <button id="btn-mute" class="icon-btn" title="Mute">🔊</button>
+    </div>
+    <div id="touch" class="touch hidden">
+      <div id="stick" class="stick"><div class="knob"></div></div>
+      <button id="btn-act" class="act">E</button>
+    </div>
+
+    <div id="intro" class="overlay hidden">
+      <div class="card">
+        <h2 id="intro-title"></h2>
+        <p id="intro-text"></p>
+        <p class="hint" id="intro-roster"></p>
+        <button id="btn-intro-ok" class="primary">I'm ready</button>
+      </div>
+    </div>
+
+    <div id="puzzle" class="overlay hidden">
+      <div class="card">
+        <h2>The Altar Speaks</h2>
+        <p id="puzzle-hint">Offer the runes in the order the fragments were marked. A wrong offering costs 15 seconds and wakes something.</p>
+        <div id="puzzle-seq" class="rune-seq"></div>
+        <div id="puzzle-pad" class="rune-pad"></div>
+        <div class="row">
+          <button id="btn-puzzle-clear">Clear</button>
+          <button id="btn-puzzle-submit" class="primary">Offer</button>
+          <button id="btn-puzzle-close">Step away</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="end" class="overlay hidden">
+      <div class="card wide">
+        <h2 id="end-title"></h2>
+        <p id="end-reason"></p>
+        <div id="end-stats" class="stats"></div>
+        <h3>Hall of the Survived</h3>
+        <table id="end-scores"><tbody></tbody></table>
+        <div class="row"><button id="btn-end-lobby" class="primary">Return to the lobby</button></div>
+      </div>
+    </div>
+
+    <div id="scare" class="scare hidden"><canvas id="scare-canvas"></canvas></div>
+    <div id="vignette"></div>
+  </section>
+</div>
+<script src="assets.js"></script>
+<script src="audio.js"></script>
+<script src="client.js"></script>
+</body>
+</html>

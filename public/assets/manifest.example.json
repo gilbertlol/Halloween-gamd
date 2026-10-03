@@ -1,0 +1,51 @@
+{
+  "sprites": {
+    "player": "sprites/player.png",
+    "zombie": "sprites/zombie.png",
+    "ghost": "sprites/ghost.png",
+    "crawler": "sprites/crawler.png",
+    "crawler_dash": "sprites/crawler_dash.png",
+    "imp": "sprites/imp.png",
+    "demon": "sprites/demon.png",
+    "demon_chase": "sprites/demon_chase.png",
+    "key": "sprites/key.png",
+    "fragment": "sprites/fragment.png",
+    "relic": "sprites/relic.png",
+    "door": "sprites/door.png",
+    "door_open": "sprites/door_open.png",
+    "exit_closed": "sprites/exit_closed.png",
+    "exit_open": "sprites/exit_open.png",
+    "altar": "sprites/altar.png",
+    "floor": "sprites/floor.png",
+    "wall": "sprites/wall.png",
+    "logo": "sprites/logo.png"
+  },
+  "scares": {
+    "scare_1": "scares/scare_1.png",
+    "scare_2": "scares/scare_2.png",
+    "scare_3": "scares/scare_3.png"
+  },
+  "audio": {
+    "music": "audio/music_ambient.ogg",
+    "scream": "audio/scream.ogg",
+    "zombie": "audio/zombie_groan.ogg",
+    "ghost": "audio/ghost_wail.ogg",
+    "crawler": "audio/crawler_skitter.ogg",
+    "crawler_dash": "audio/crawler_dash.ogg",
+    "imp": "audio/imp_giggle.ogg",
+    "demon": "audio/demon_growl.ogg",
+    "demon_roar": "audio/demon_roar.ogg",
+    "whisper": "audio/whisper.ogg",
+    "knock": "audio/knock.ogg",
+    "creak": "audio/creak.ogg",
+    "key": "audio/key_pickup.ogg",
+    "fragment": "audio/fragment_pickup.ogg",
+    "item": "audio/relic_pickup.ogg",
+    "door": "audio/door_open.ogg",
+    "bell": "audio/exit_bell.ogg",
+    "caught": "audio/caught.ogg",
+    "wrong": "audio/altar_wrong.ogg",
+    "victory": "audio/victory.ogg",
+    "defeat": "audio/defeat.ogg"
+  }
+}
