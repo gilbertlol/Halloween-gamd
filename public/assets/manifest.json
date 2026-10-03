@@ -743,7 +743,16 @@
    "atlas": "chars",
    "col": 7,
    "row": 7
-  }
+  },
+  "flare": "ui/flare.png",
+  "ghost_player": "ui/ghost_player.png",
+  "compass_arrow": "ui/compass.png",
+  "banner_blackout": "ui/banner_blackout.png",
+  "banner_hunt": "ui/banner_bell.png",
+  "banner_slam": "ui/banner_door.png",
+  "portrait0": "ui/portrait_blue.png",
+  "portrait1": "ui/portrait_amber.png",
+  "portrait2": "ui/portrait_purple.png"
  },
  "scares": {
   "ghost": {
@@ -954,6 +963,12 @@
  },
  "audio": {
   "music": "audio/music.mp3",
-  "scream": "audio/scream.mp3"
+  "scream": "audio/scream.mp3",
+  "closecall": "audio/close_call.mp3",
+  "event_hunt": "audio/bell_toll.mp3",
+  "event_slam": "audio/door_slam.mp3",
+  "event_blackout": "audio/blackout.mp3",
+  "flare": "audio/flare_ignite.mp3",
+  "hint": "audio/compass_whisper.mp3"
  }
 }
