@@ -32,6 +32,15 @@
   const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
   const T = { FLOOR: 0, WALL: 1, DOOR: 2, EXIT: 3, ALTAR: 4 };
 
+  // Brightness: players found the night too dark. Three levels, remembered per device.
+  const BRIGHT = [
+    { name: 'Dim', fog: 0.86, night: 0.45, tint: 0.14 },
+    { name: 'Normal', fog: 0.74, night: 0.26, tint: 0.2 },
+    { name: 'Bright', fog: 0.6, night: 0.12, tint: 0.24 },
+  ];
+  let brightIdx = 1;
+  try { const v = parseInt(localStorage.getItem('nf-bright'), 10); if (v >= 0 && v < BRIGHT.length) brightIdx = v; } catch (e) { /* storage blocked */ }
+
   const S = {
     ws: null, id: null, levels: [], itemsMeta: {}, room: null, profile: null,
     game: null, snap: null, prevTime: 0, disp: new Map(), mon: new Map(),
@@ -39,6 +48,7 @@
     tile: 24, cam: { x: 0, y: 0 }, mapCanvas: null, fogCanvas: null, muted: false,
     puzzleSeq: [], log: [], nearAltar: false, scareUntil: 0, msgs: [], floaters: [], hideOrder: false,
     connected: false, pendingJoin: null, ending: false, playerColor: new Map(), lastSnapAt: 0,
+    action: null, actionSig: '', explored: null, miniAt: 0, mapTile: 0,
   };
 
   // ============================================================ networking
@@ -230,7 +240,14 @@
     $('#intro-text').textContent = init.intro;
     $('#intro-roster').textContent = `Tonight: ${init.monsters.join(', ')}. ${init.keys} locked door${init.keys > 1 ? 's' : ''}, ${init.fragments} rune fragments.`;
     $('#intro-warm').textContent = '';
-    $('#touch').classList.toggle('hidden', !('ontouchstart' in window));
+    const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    $('#touch').classList.toggle('hidden', !touch);
+    $('#game').classList.toggle('is-touch', touch);
+    $('#intro-controls').innerHTML = touch
+      ? '<span>Move with the stick</span><span>A glowing button appears when you can act: tap it</span>'
+      : '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows: move</span><span><kbd>E</kbd> act when the button glows</span><span><kbd>B</kbd> brightness</span><span><kbd>M</kbd> mute</span>';
+    S.explored = new Uint8Array(init.W * init.H); S.action = null; S.actionSig = '';
+    $('#hud-action').classList.add('hidden');
     resize();
     Audio.init(); Audio.resume();
     if (init.cinematic) { Audio.stopMusic(); playCinematic(); } else { $('#intro').classList.remove('hidden'); Audio.startMusic(); }
@@ -453,11 +470,11 @@
     const m = me();
     let obj = '';
     const remaining = g.fragments - s.got.length;
-    if (m && m.down) obj = `You are down, drifting as a ghost. Move to a friend to be revived. ${m.fc > 0 ? `Flare ready in ${m.fc}s.` : 'Press E to drop a flare for the team.'}`;
+    if (m && m.down) obj = 'You are down, drifting as a ghost. Float to a friend to be revived.';
     else if (m && m.esc) obj = 'You made it out. Wait for the others.';
     else if (s.exitOpen) obj = 'The exit is open. Run for it.';
     else if (remaining > 0) obj = `Find the rune fragments (${s.got.length}/${g.fragments}). ${S.hideOrder ? 'Remember the order they were marked.' : ''} Keys open the locked doors.`;
-    else obj = 'Every fragment is found. Read the altar.';
+    else obj = 'Every fragment is found. Go to the glowing altar and read it.';
     $('#hud-objective').textContent = obj;
     const escEl = $('#hud-escape');
     if (s.waitFor > 0) { escEl.classList.remove('hidden'); escEl.textContent = `WAITING FOR ${s.waitFor} TO FINISH THE INTRO`; }
@@ -465,10 +482,7 @@
     else { escEl.classList.toggle('hidden', s.esc === null); if (s.esc !== null) escEl.textContent = `THE DOOR CLOSES IN ${s.esc}`; }
     $('#intro-warm').textContent = s.waitFor > 0 ? `Waiting for ${s.waitFor} ${s.waitFor === 1 ? 'soul' : 'souls'} to finish the intro` : s.warm > 0 ? `The night begins in ${s.warm}` : 'The night has begun';
     S.nearAltar = !!(m && !m.down && !m.esc && remaining === 0 && !s.solved && Math.hypot(m.x - g.altar.x - 0.5, m.y - g.altar.y - 0.5) < 1.6);
-    const prompt = $('#hud-prompt');
-    const ghostFlare = !!(m && m.down && m.fc === 0);
-    prompt.classList.toggle('hidden', !(S.nearAltar || ghostFlare) || !$('#puzzle').classList.contains('hidden'));
-    prompt.textContent = ghostFlare ? 'Press E (or tap E) to drop a flare for your friends' : 'Press E (or tap E) to read the altar';
+    updateAction(m, s, g, remaining);
     $('#hud-score-val').textContent = (s.score || 0).toLocaleString();
     const st = $('#hud-streak'); st.classList.toggle('hidden', !(m && m.st >= 2)); if (m && m.st >= 2) st.textContent = `close-call streak ×${m.st}`;
   }
@@ -507,6 +521,7 @@
       e.preventDefault();
     }
     if (e.code === 'KeyM') toggleMute();
+    if (e.code === 'KeyB' && S.game) setBrightness(brightIdx + 1);
     if (e.code === 'Escape') $('#puzzle').classList.add('hidden');
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   });
@@ -527,8 +542,39 @@
   stick.addEventListener('touchstart', (e) => { e.preventDefault(); stickMove(e); }, { passive: false });
   stick.addEventListener('touchmove', (e) => { e.preventDefault(); stickMove(e); }, { passive: false });
   stick.addEventListener('touchend', () => { touch = { active: false, dx: 0, dy: 0 }; knob.style.left = '40px'; knob.style.top = '40px'; });
-  $('#btn-act').addEventListener('touchstart', (e) => { e.preventDefault(); if (!$('#intro').classList.contains('hidden')) $('#intro').classList.add('hidden'); else act(); }, { passive: false });
-  function act() { const m = me(); if (m && m.down) send({ t: 'flare' }); else openPuzzle(); }
+  // One context action: the button appears only when there is something to do,
+  // names it, and shows why when it cannot be done yet.
+  function updateAction(m, s, g, remaining) {
+    let a = null;
+    const altarD = m ? Math.hypot(m.x - g.altar.x - 0.5, m.y - g.altar.y - 0.5) : 99;
+    if (!m || m.esc || !$('#puzzle').classList.contains('hidden') || !$('#intro').classList.contains('hidden') || s.warm > 0) a = null;
+    else if (m.down) a = m.fc === 0 ? { kind: 'flare', on: true, ic: '🔥', label: 'Drop a flare', sub: 'light the way for your friends' } : { kind: 'flare', on: false, ic: '🔥', label: `Flare in ${m.fc}s`, sub: '' };
+    else if (altarD < 1.6 && !s.solved) a = remaining === 0 ? { kind: 'altar', on: true, ic: '✦', label: 'Read the altar', sub: 'offer the runes in order' } : { kind: 'altar', on: false, ic: '✦', label: `Altar: ${remaining} rune${remaining > 1 ? 's' : ''} missing`, sub: 'find every fragment first' };
+    else {
+      const friend = s.players.find((o) => o.id !== m.id && o.down && Math.hypot(o.x - m.x, o.y - m.y) < 1.0);
+      if (friend) a = { kind: 'revive', on: false, ic: '✚', label: `Reviving ${nameOf(friend.id)}`, sub: 'stay close', progress: friend.rv };
+    }
+    S.action = a;
+    const el = $('#hud-action');
+    const sig = a ? `${a.kind}|${a.on}|${a.label}` : '';
+    if (sig !== S.actionSig) {
+      const wasHidden = el.classList.contains('hidden');
+      S.actionSig = sig;
+      el.classList.toggle('hidden', !a);
+      if (a) {
+        el.classList.toggle('off', !a.on);
+        el.querySelector('.ic').textContent = a.ic; el.querySelector('.label').textContent = a.label; el.querySelector('.sub').textContent = a.sub;
+        if (a.on && wasHidden) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
+      }
+    }
+    el.querySelector('.bar').style.width = a && a.progress ? `${Math.round(a.progress * 100)}%` : '0';
+  }
+  function act() {
+    const a = S.action; if (!a || !a.on) return;
+    if (a.kind === 'flare') send({ t: 'flare' });
+    else if (a.kind === 'altar') openPuzzle();
+  }
+  $('#hud-action').addEventListener('click', (e) => { e.preventDefault(); act(); });
 
   function pollInput(now) {
     if (!S.game) return;
@@ -551,8 +597,16 @@
     canvas.width = Math.floor(innerWidth * dpr); canvas.height = Math.floor(innerHeight * dpr);
     if (!S.game) return;
     const g = S.game;
-    const fit = Math.min(canvas.width / g.W, canvas.height / g.H);
-    S.tile = fit >= 13 * dpr ? Math.floor(fit) : Math.floor(20 * dpr);
+    // Zoom so the lantern's light fills a good part of the screen (it used to
+    // fit the whole map, which made the survivor and the light tiny on desktop).
+    const L = S.levels[g.level - 1];
+    const vision = (L ? L.vision : 5) + 0.5;
+    const shortCss = Math.min(innerWidth, innerHeight);
+    const tileCss = Math.max(18, Math.min(52, shortCss / (2 * vision + 4)));
+    const fitCss = Math.min(innerWidth / g.W, innerHeight / g.H);
+    S.tile = Math.floor(Math.max(tileCss, fitCss) * dpr);
+    // the pre-rendered map is capped at ~12 MP (phones refuse bigger canvases) and scaled up when drawn
+    S.mapTile = Math.max(8, Math.min(S.tile, Math.floor(Math.sqrt(12e6 / (g.W * g.H)))));
     buildMapCanvas();
     S.fogCanvas = document.createElement('canvas'); S.fogCanvas.width = canvas.width; S.fogCanvas.height = canvas.height;
   }
@@ -560,7 +614,7 @@
 
   // Pre-render the static map once per tile size.
   function buildMapCanvas() {
-    const g = S.game, s = S.tile;
+    const g = S.game, s = S.mapTile || S.tile;
     const c = document.createElement('canvas'); c.width = g.W * s; c.height = g.H * s;
     const x = c.getContext('2d');
     const rnd = seeded(g.seed), th = theme(), decor = [];
@@ -576,7 +630,7 @@
         } else {
           const key = rnd() < th.accentChance ? pick(th.accent) : pick(th.floor);
           sprite(key, px + s / 2, py + s / 2, s, 1, false, 1, x);
-          x.fillStyle = 'rgba(5,3,8,.45)'; x.fillRect(px, py, s, s); // night
+          x.fillStyle = `rgba(5,3,8,${BRIGHT[brightIdx].night})`; x.fillRect(px, py, s, s); // night
           const inner = t === T.FLOOR && [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => nb(dx, dy) === T.FLOOR);
           if (inner && rnd() < th.decorChance) decor.push({ key: pick(th.decor), px: px + s / 2, py: py + s / 2 });
         }
@@ -639,11 +693,11 @@
     const m = me(); const md = m && S.disp.get(m.id);
     let cx = mapW <= W ? (W - mapW) / 2 : -(md ? md.x * s : mapW / 2) + W / 2;
     let cy = mapH <= H ? (H - mapH) / 2 : -(md ? md.y * s : mapH / 2) + H / 2;
-    if (mapW > W) cx = Math.max(W - mapW, Math.min(0, cx));
-    if (mapH > H) cy = Math.max(H - mapH, Math.min(0, cy));
+    // keep the survivor centred (no clamping to the map edge): clamping pushed
+    // players near an edge under the HUD and the minimap on phones
     S.cam.x = cx; S.cam.y = cy;
     ctx.save(); ctx.translate(cx, cy);
-    ctx.drawImage(S.mapCanvas, 0, 0);
+    ctx.imageSmoothingEnabled = S.mapTile >= s; ctx.drawImage(S.mapCanvas, 0, 0, g.W * s, g.H * s); ctx.imageSmoothingEnabled = true;
 
     if (snap) {
       const alive = snap.players.filter((p) => !p.down && !p.esc).map((p) => ({ ...S.disp.get(p.id), vis: p.vis }));
@@ -709,6 +763,8 @@
       ctx.restore();
       // fog of war: the map is faintly visible everywhere, entities only in the light
       drawFog(alive, s, time);
+      markExplored(alive);
+      if (performance.now() - S.miniAt > 200) { S.miniAt = performance.now(); drawMinimap(); }
       // audio listener + heartbeat
       if (md) {
         Audio.setListener({ x: md.x, y: md.y });
@@ -745,18 +801,58 @@
     ctx.save(); ctx.translate(x, y); ctx.globalAlpha = pulse * 0.9; ctx.fillStyle = color; ctx.font = `${Math.round(u * 0.42)}px Georgia`; ctx.textAlign = 'center'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
     ctx.fillText(kind, Math.cos(angle) * (r + u * 0.9), Math.sin(angle) * (r + u * 0.9) + u * 0.15); ctx.restore();
   }
+  // ---- explored-area memory and minimap (the zoomed camera no longer shows the whole map)
+  function markExplored(lights) {
+    const g = S.game, ex = S.explored; if (!ex) return;
+    for (const p of lights) {
+      if (p.x === undefined) continue;
+      const r = Math.ceil(p.vis), cx = Math.floor(p.x), cy = Math.floor(p.y);
+      for (let y = Math.max(0, cy - r); y <= Math.min(g.H - 1, cy + r); y++)
+        for (let x = Math.max(0, cx - r); x <= Math.min(g.W - 1, cx + r); x++)
+          if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r) ex[y * g.W + x] = 1;
+    }
+  }
+  function drawMinimap() {
+    const c = $('#minimap'), g = S.game, ex = S.explored, snap = S.snap; if (!c || !g || !ex) return;
+    const cssW = c.clientWidth || 200, cssH = c.clientHeight || 160;
+    if (c.width !== cssW * 2) { c.width = cssW * 2; c.height = cssH * 2; }
+    const x = c.getContext('2d'), k = Math.min(c.width / g.W, c.height / g.H), ox = (c.width - g.W * k) / 2, oy = (c.height - g.H * k) / 2;
+    x.clearRect(0, 0, c.width, c.height);
+    for (let ty = 0; ty < g.H; ty++) for (let tx = 0; tx < g.W; tx++) {
+      const i = ty * g.W + tx; if (!ex[i]) continue;
+      const t = g.tilesArr[i];
+      x.fillStyle = t === T.WALL ? '#3a2a4a' : '#8a7f96';
+      x.fillRect(ox + tx * k, oy + ty * k, Math.ceil(k), Math.ceil(k));
+    }
+    if (!snap) return;
+    const dot = (px, py, r, col) => { x.fillStyle = col; x.beginPath(); x.arc(ox + px * k, oy + py * k, r, 0, 7); x.fill(); };
+    for (const d of g.doors) if (ex[d.y * g.W + d.x] && !snap.doors.includes(d.keyId)) { x.fillStyle = KEY_COLORS[d.keyId]; x.fillRect(ox + d.x * k - 1, oy + d.y * k - 1, k + 2, k + 2); }
+    if (ex[g.altar.y * g.W + g.altar.x]) dot(g.altar.x + 0.5, g.altar.y + 0.5, Math.max(3, k), snap.got.length === g.fragments ? '#ffd98a' : '#b67ae6');
+    if (ex[g.exit.y * g.W + g.exit.x]) { x.fillStyle = snap.exitOpen ? '#5ad17a' : '#a3121a'; x.fillRect(ox + g.exit.x * k - 1, oy + g.exit.y * k - 1, k + 2, k + 2); }
+    for (const kk of snap.keys) if (ex[Math.floor(kk.y) * g.W + Math.floor(kk.x)]) dot(kk.x, kk.y, Math.max(2.5, k * 0.8), KEY_COLORS[kk.id]);
+    for (const f of snap.frags) if (ex[Math.floor(f.y) * g.W + Math.floor(f.x)]) dot(f.x, f.y, Math.max(2.5, k * 0.8), '#c56bff');
+    for (const p of snap.players) { if (p.esc) continue; const d = S.disp.get(p.id); if (!d) continue; const mine = p.id === S.id; if (mine) dot(d.x, d.y, Math.max(5, k * 1.6), 'rgba(255,255,255,.35)'); dot(d.x, d.y, Math.max(3, k * (mine ? 1.1 : 0.9)), p.down ? '#7aa7ff' : (S.playerColor.get(p.id) || '#fff')); }
+  }
+
+  function setBrightness(i) {
+    brightIdx = (i + BRIGHT.length) % BRIGHT.length;
+    try { localStorage.setItem('nf-bright', String(brightIdx)); } catch (e) { /* storage blocked */ }
+    if (S.game) { buildMapCanvas(); addLog(`Brightness: ${BRIGHT[brightIdx].name}`); }
+  }
+  $('#btn-bright').onclick = () => setBrightness(brightIdx + 1);
+
   function drawFog(alive, s, time) {
     const f = S.fogCanvas; if (!f) return;
     const fx = f.getContext('2d');
     fx.setTransform(1, 0, 0, 1, 0, 0); fx.globalCompositeOperation = 'source-over';
     fx.clearRect(0, 0, f.width, f.height);
-    fx.fillStyle = 'rgba(0,0,0,0.86)'; fx.fillRect(0, 0, f.width, f.height);
+    fx.fillStyle = `rgba(0,0,0,${BRIGHT[brightIdx].fog})`; fx.fillRect(0, 0, f.width, f.height);
     fx.globalCompositeOperation = 'destination-out';
     for (const p of alive) {
       const flicker = 1 + 0.025 * Math.sin(time * 11 + p.x) + 0.015 * Math.sin(time * 23.7);
       const r = p.vis * s * flicker, x = p.x * s + S.cam.x, y = p.y * s + S.cam.y;
-      const grad = fx.createRadialGradient(x, y, r * 0.35, x, y, r);
-      grad.addColorStop(0, 'rgba(0,0,0,1)'); grad.addColorStop(0.7, 'rgba(0,0,0,0.85)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+      const grad = fx.createRadialGradient(x, y, r * 0.5, x, y, r);
+      grad.addColorStop(0, 'rgba(0,0,0,1)'); grad.addColorStop(0.65, 'rgba(0,0,0,0.92)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
       fx.fillStyle = grad; fx.beginPath(); fx.arc(x, y, r, 0, 7); fx.fill();
     }
     ctx.drawImage(f, 0, 0);
@@ -768,7 +864,7 @@
       const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
       if (p.flare) { grad.addColorStop(0, 'rgba(255,120,40,0.35)'); grad.addColorStop(1, 'rgba(255,120,40,0)'); }
       else if (p.ghost) { grad.addColorStop(0, 'rgba(120,140,255,0.06)'); grad.addColorStop(1, 'rgba(120,140,255,0)'); }
-      else { grad.addColorStop(0, 'rgba(255,150,60,0.16)'); grad.addColorStop(1, 'rgba(255,150,60,0)'); }
+      else { grad.addColorStop(0, `rgba(255,150,60,${BRIGHT[brightIdx].tint})`); grad.addColorStop(1, 'rgba(255,150,60,0)'); }
       ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
     }
     ctx.globalCompositeOperation = 'source-over'; ctx.restore();
@@ -943,5 +1039,5 @@
   }
 
   connect();
-  if (location.hash === '#debug') window.__nf = { showEvent, jumpScare }; // visual checks only
+  if (location.hash === '#debug') window.__nf = { showEvent, jumpScare, updateAction, setBrightness, me: () => me(), state: () => S }; // visual checks only
 })();

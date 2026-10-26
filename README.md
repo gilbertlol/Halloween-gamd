@@ -22,9 +22,10 @@ plays the same level at the same time.
 |---|---|
 | WASD / arrow keys / touch stick | move |
 | walk into a locked door | opens it if the team holds its key |
-| E / Space / tap **E** | read the altar (once every fragment is found) |
+| E / Space / the glowing action button | read the altar, or drop a flare as a ghost; the button only appears when there is something to do |
 | stand beside a fallen friend | revive them (2 s) |
 | M | mute |
+| B | brightness: Dim, Normal, Bright (remembered per device) |
 
 ## Features
 
@@ -44,6 +45,7 @@ plays the same level at the same time.
 - **Close calls.** A monster that passes within a tile and misses you is a
   close call: chime, bonus points, and a streak multiplier that resets when
   you go down. Score is shown live.
+- **Readable dark.** The camera zooms to your lantern's reach and keeps you centred, a minimap remembers what the team has explored, and a brightness setting lets each player tune the night.
 - **Share card.** The end screen draws a result card with copy-text, invite
   link and save-image buttons.
 - **Survivors.** Three survivor looks unlock by surviving nights (cosmetic).
