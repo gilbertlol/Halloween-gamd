@@ -98,15 +98,16 @@
       <div id="hud-players" class="hud-players"></div>
       <div id="hud-objective" class="hud-objective"></div>
       <div id="hud-log" class="hud-log"></div>
-      <div id="hud-prompt" class="hud-prompt hidden"></div>
+      <canvas id="minimap" class="minimap" width="200" height="160" title="Map of what your team has seen"></canvas>
+      <button id="hud-action" class="hud-action hidden" type="button"><span class="key">E</span><span class="ic"></span><span class="txt"><span class="label"></span><span class="sub"></span></span><span class="bar"></span></button>
       <div id="hud-escape" class="hud-escape hidden"></div>
       <div id="hud-event" class="hud-event hidden"></div>
       <div id="hud-score" class="hud-score"><span id="hud-score-val">0</span><span id="hud-streak" class="streak hidden"></span></div>
-      <button id="btn-mute" class="icon-btn" title="Mute">🔊</button>
+      <button id="btn-bright" class="icon-btn bright-btn" title="Brightness (B)">☀</button>
+      <button id="btn-mute" class="icon-btn" title="Mute (M)">🔊</button>
     </div>
     <div id="touch" class="touch hidden">
       <div id="stick" class="stick"><div class="knob"></div></div>
-      <button id="btn-act" class="act">E</button>
     </div>
 
     <div id="intro" class="overlay hidden">
@@ -114,6 +115,7 @@
         <h2 id="intro-title"></h2>
         <p id="intro-text"></p>
         <p class="hint" id="intro-roster"></p>
+        <div id="intro-controls" class="controls"></div>
         <p id="intro-warm" class="warm"></p>
         <button id="btn-intro-ok" class="primary">I'm ready</button>
       </div>

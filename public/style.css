@@ -141,13 +141,32 @@ td.won { color: var(--green); } td.lost { color: var(--blood); }
 .hud-log div { background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 4px; font-size: 12.5px; animation: fadein .3s; }
 .hud-log .bad { color: #ff6b6b; } .hud-log .good { color: var(--green); } .hud-log .relic { color: #ffd98a; }
 @keyframes fadein { from { opacity: 0; transform: translateY(4px); } }
-.hud-prompt { position: absolute; left: 50%; bottom: 90px; transform: translateX(-50%); background: rgba(20,10,30,.85); border: 1px solid var(--accent); padding: 8px 16px; border-radius: 8px; color: #fff; }
+/* context action: appears only when there is something to do, and says what */
+.hud-action { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); pointer-events: auto; display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 10px 22px 10px 12px; border-radius: 999px; border: 2px solid #ffb347; background: linear-gradient(180deg, rgba(179,70,26,.95), rgba(110,20,20,.95)); color: #fff; font-size: 18px; letter-spacing: .04em; box-shadow: 0 0 0 0 rgba(255,179,71,.7), 0 8px 30px rgba(0,0,0,.7); animation: actpulse 1.4s ease-out infinite; overflow: hidden; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.hud-action .key { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 8px; background: #f3e6d0; color: #2a1408; font: bold 20px ui-monospace, monospace; box-shadow: inset 0 -3px 0 rgba(0,0,0,.35); }
+.hud-action .ic { font-size: 24px; line-height: 1; }
+.hud-action .ic:empty { display: none; }
+.hud-action .txt { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+.hud-action .label { font-weight: bold; text-transform: uppercase; letter-spacing: .08em; }
+.hud-action .sub { font-size: 12.5px; color: #ffd98a; font-style: italic; }
+.hud-action .sub:empty { display: none; }
+.hud-action .bar { position: absolute; left: 0; bottom: 0; height: 4px; width: 0; background: #5ad17a; transition: width .1s linear; }
+.hud-action.off { animation: none; border-color: rgba(255,255,255,.25); background: rgba(20,12,28,.88); cursor: default; }
+.hud-action.off .key { display: none; }
+.hud-action.off .label { color: #d9cfe3; }
+.hud-action.pop { animation: actpop .35s ease-out, actpulse 1.4s ease-out .35s infinite; }
+@keyframes actpulse { 0% { box-shadow: 0 0 0 0 rgba(255,179,71,.7), 0 8px 30px rgba(0,0,0,.7); } 70% { box-shadow: 0 0 0 18px rgba(255,179,71,0), 0 8px 30px rgba(0,0,0,.7); } 100% { box-shadow: 0 0 0 0 rgba(255,179,71,0), 0 8px 30px rgba(0,0,0,.7); } }
+@keyframes actpop { from { transform: translateX(-50%) scale(.6); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
+#game.is-touch .hud-action .key { display: none; }
+.minimap { position: absolute; right: 14px; bottom: 84px; width: 200px; height: 160px; background: rgba(5,3,8,.72); border: 1px solid rgba(242,140,40,.35); border-radius: 6px; image-rendering: pixelated; pointer-events: none; }
+.bright-btn { right: 64px !important; }
+.controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; font-size: 13px; color: var(--dim); margin: 6px 0 4px; }
+.controls kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border-radius: 4px; background: #f3e6d0; color: #2a1408; font: bold 12px ui-monospace, monospace; box-shadow: inset 0 -2px 0 rgba(0,0,0,.35); margin-right: 4px; }
 .hud-escape { position: absolute; left: 50%; top: 70px; transform: translateX(-50%); font-size: 22px; color: var(--green); text-shadow: 0 0 12px var(--green); letter-spacing: .15em; }
 .icon-btn { position: absolute; right: 14px; bottom: 14px; pointer-events: auto; background: rgba(0,0,0,.5); border-color: #3a2a4a; padding: 6px 10px; }
 .touch { position: absolute; inset: 0; pointer-events: none; }
 .stick { position: absolute; left: 30px; bottom: 60px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.15); pointer-events: auto; touch-action: none; }
 .knob { position: absolute; left: 40px; top: 40px; width: 40px; height: 40px; border-radius: 50%; background: rgba(242,140,40,.6); }
-.act { position: absolute; right: 30px; bottom: 80px; width: 70px; height: 70px; border-radius: 50%; pointer-events: auto; font-size: 22px; background: rgba(163,18,26,.6); touch-action: none; }
 .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.72); pointer-events: auto; z-index: 20; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px 28px; max-width: 520px; width: calc(100% - 32px); box-shadow: 0 20px 80px rgba(0,0,0,.8); text-align: center; }
 .card.wide { max-width: 680px; max-height: 92vh; overflow: auto; }
@@ -174,10 +193,18 @@ td.won { color: var(--green); } td.lost { color: var(--blood); }
   .hud-top { padding: 8px 10px; }
   .hud-level { font-size: 11px; max-width: 40vw; }
   .hud-timer { font-size: 20px; }
-  .hud-players { top: 52px; }
-  .hud-objective { top: auto; bottom: 170px; right: 10px; left: 10px; max-width: none; text-align: center; font-size: 12.5px; }
+  .hud-players { top: 104px; left: 10px; }
+  .hud-players .hp { font-size: 11px; }
+  .hud-objective { top: 50px; bottom: auto; right: 10px; left: 10px; max-width: none; text-align: center; font-size: 12.5px; background: rgba(0,0,0,.45); padding: 4px 8px; border-radius: 6px; }
+  .minimap { top: 104px; bottom: auto; right: 10px; width: 104px; height: 84px; opacity: .9; }
+  .hud-action { left: auto; right: 14px; bottom: 60px; transform: none; min-height: 56px; font-size: 14px; padding: 8px 16px 8px 12px; gap: 8px; max-width: 56vw; }
+  .hud-action .sub { font-size: 11px; }
+  .hud-action.pop { animation: actpop-m .35s ease-out, actpulse 1.4s ease-out .35s infinite; }
+  .hud-score { right: auto; left: 50%; transform: translateX(-50%); bottom: 8px; text-align: center; font-size: 15px; }
+  .bright-btn { right: 58px !important; }
   .hud-log { bottom: 200px; max-width: 90vw; }
-  .act { bottom: 150px; right: 20px; }
   .stick { bottom: 40px; left: 20px; }
   .icon-btn { bottom: 8px; right: 8px; }
 }
+
+@keyframes actpop-m { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
