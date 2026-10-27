@@ -46,6 +46,17 @@ plays the same level at the same time.
   close call: chime, bonus points, and a streak multiplier that resets when
   you go down. Score is shown live.
 - **Readable dark.** The camera zooms to your lantern's reach and keeps you centred, a minimap remembers what the team has explored, and a brightness setting lets each player tune the night.
+- **First-night tutorial.** Until a device has escaped once, short tips walk
+  the player through moving, the first rune, keys and doors, the altar and
+  the exit, with an arrow along the corridors. A warning appears the first
+  time a monster comes into view. Players can skip the tips.
+- **Haptics.** On Android phones, close calls, jump scares, events, pickups and
+  a heartbeat when a monster is very close vibrate the phone. iPhones have no
+  vibration API; on iOS 18+ a light system tick is used as a best effort.
+  Muting also silences vibration.
+- **Name protection.** The first device to use a name claims it and gets a
+  recovery code (shown in the room panel). Joining as that name from another
+  device requires the code. Only a salted hash is stored on the server.
 - **Share card.** The end screen draws a result card with copy-text, invite
   link and save-image buttons.
 - **Survivors.** Three survivor looks unlock by surviving nights (cosmetic).
@@ -123,11 +134,23 @@ Environment:
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `3000` | HTTP + WebSocket port |
-| `DATA_DIR` | `./data` | where `scores.json` and `profiles.json` live |
+| `DATA_DIR` | `./data` | where `scores.json`, `profiles.json` and `events.ndjson` live |
+| `ADMIN_TOKEN` | unset | enables the private stats page at `/admin/stats?token=<value>` |
 
 Put it behind HTTPS (the client switches to `wss://` automatically). Rooms are
 in memory, so run one instance, or pin players to one instance with sticky
 sessions if you scale out.
+
+## Analytics
+
+The server records anonymous gameplay events (visits, joins, nights started
+and finished, deaths with the monster, time and position, quits mid-night,
+tutorial steps, intro watched or skipped) with a random per-device id, never
+a name. Open `/admin/stats?token=<ADMIN_TOKEN>` for the funnel, win rate per
+night, deaths by monster and by minute, quits, tutorial completion and a death
+heatmap on today's Tonight's Night map (`/admin/stats.json` for raw numbers).
+Events are kept in `DATA_DIR/events.ndjson`; on a host without a persistent
+disk they reset on every deploy.
 
 ## Development
 

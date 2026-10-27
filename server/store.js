@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 // Tiny JSON-file persistence for high scores and player profiles.
 // Writes are debounced and atomic (write temp file, then rename).
@@ -83,6 +84,43 @@ function getProfile(name) {
   return profiles.data.byName[key];
 }
 
+// ---- name protection -------------------------------------------------------
+// A name belongs to whoever first claims it. The claimant's device keeps a
+// recovery code; the server stores only a salted hash. Joining with a claimed
+// name requires that code. Profiles created before this existed have no hash
+// and are claimed by the next player who uses the name.
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function newRecoveryCode() {
+  let s = '';
+  for (let i = 0; i < 16; i++) s += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+  return `NF-${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8, 12)}-${s.slice(12)}`;
+}
+function normCode(code) { return String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^NF/, ''); }
+function hashCode(code, salt) { return crypto.createHash('sha256').update(`${salt}:${normCode(code)}`).digest('hex'); }
+
+function profileExists(name) { return !!profiles.data.byName[normName(name)]; }
+
+// Returns { ok, profile, code? } where `code` is set only when a new claim was made.
+function claimProfile(name, code) {
+  const p = getProfile(name);
+  if (!p.secretHash) {
+    const fresh = newRecoveryCode();
+    p.salt = crypto.randomBytes(8).toString('hex');
+    p.secretHash = hashCode(fresh, p.salt);
+    profiles.save();
+    return { ok: true, profile: p, code: fresh };
+  }
+  if (!code) return { ok: false, reason: 'taken' };
+  const a = Buffer.from(hashCode(code, p.salt), 'hex'), b = Buffer.from(p.secretHash, 'hex');
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return { ok: true, profile: p };
+  return { ok: false, reason: 'taken' };
+}
+
+// What clients may see of a profile (never the hash or salt).
+function publicProfile(p) {
+  return { name: p.name, unlocked: p.unlocked, items: p.items, wins: p.wins, best: p.best, survivor: p.survivor || 0 };
+}
+
 function updateProfile(name, fn) {
   const p = getProfile(name);
   fn(p);
@@ -92,4 +130,4 @@ function updateProfile(name, fn) {
 
 function flushAll() { scores.flush(); profiles.flush(); }
 
-module.exports = { addScore, topScores, addDailyScore, topDaily, getProfile, updateProfile, flushAll };
+module.exports = { addScore, topScores, addDailyScore, topDaily, getProfile, updateProfile, flushAll, claimProfile, publicProfile, profileExists, normCode };
