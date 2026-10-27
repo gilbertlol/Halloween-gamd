@@ -1206,5 +1206,5 @@
   }
 
   connect();
-  if (location.hash === '#debug') window.__nf = { showEvent, jumpScare, updateAction, setBrightness, Haptics, me: () => me(), state: () => S }; // visual checks only
+  if (location.hash === '#debug') window.__nf = { showEvent, jumpScare, updateAction, setBrightness, Haptics, me: () => me(), state: () => S, path: (targets) => tutPath(me(), S.snap, S.game, targets) }; // visual checks only
 })();

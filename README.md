@@ -181,6 +181,11 @@ heatmap on today's Tonight's Night map (`/admin/stats.json` for raw numbers).
 Events are kept in `DATA_DIR/events.ndjson`; on a host without a persistent
 disk they reset on every deploy.
 
+## Operations and launch
+
+- [`docs/SERVICES.md`](docs/SERVICES.md): the services that run the game (Render, Neon, UptimeRobot, GitHub), where settings live, limits, and a runbook.
+- [`marketing/LAUNCH.md`](marketing/LAUNCH.md): trailers, share images and ready-to-post launch copy.
+
 ## Development
 
 ```bash
