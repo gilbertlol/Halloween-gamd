@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const db = require('./db');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const FILE = path.join(DATA_DIR, 'events.ndjson');
@@ -30,15 +31,42 @@ function load() {
   } catch (e) { console.error('[analytics] load failed:', e.message); }
 }
 
+let useDb = false;
+let dbWriting = null;
+const RETAIN_DAYS = 60; // keeps the free database tier small
+
 function flush() {
   flushTimer = null;
-  if (!buffer.length) return;
+  if (!buffer.length) return dbWriting || Promise.resolve();
+  if (useDb) {
+    if (dbWriting) { if (!flushTimer) flushTimer = setTimeout(flush, 2000); return dbWriting; }
+    const batch = buffer; buffer = [];
+    dbWriting = db.insertEvents(batch).catch((e) => {
+      console.error('[analytics] database write failed, will retry:', e.message);
+      buffer = batch.concat(buffer).slice(-20000); // keep at most 20k unsent events
+      if (!flushTimer) flushTimer = setTimeout(flush, 10000);
+    }).finally(() => { dbWriting = null; });
+    return dbWriting;
+  }
   const chunk = buffer.map((e) => JSON.stringify(e)).join('\n') + '\n';
   buffer = [];
   try {
     if (fs.existsSync(FILE) && fs.statSync(FILE).size > MAX_FILE) fs.renameSync(FILE, FILE.replace(/\.ndjson$/, '.1.ndjson'));
     fs.appendFileSync(FILE, chunk);
   } catch (e) { console.error('[analytics] write failed:', e.message); }
+  return Promise.resolve();
+}
+
+// Use the database when connected: load recent events and prune old ones daily.
+async function init() {
+  if (!db.ready) return 'files';
+  useDb = true;
+  const since = Date.now() - 30 * 86400000;
+  events = await db.recentEvents(since, MAX_EVENTS);
+  const prune = () => db.pruneEvents(Date.now() - RETAIN_DAYS * 86400000).then((n) => { if (n) console.log(`[analytics] pruned ${n} old events`); }).catch((e) => console.error('[analytics] prune failed:', e.message));
+  prune(); setInterval(prune, 86400000).unref();
+  console.log(`[analytics] using the database: ${events.length} recent events loaded`);
+  return 'database';
 }
 
 function track(type, data) {
@@ -110,7 +138,7 @@ function tonightDeaths(date) {
   return events.filter((e) => e.t === 'death' && e.mode === 'tonight' && e.date === date).map((e) => ({ x: e.x, y: e.y, monster: e.monster }));
 }
 
-load();
-process.on('exit', flush);
+if (!process.env.DATABASE_URL) load(); // file mode; the database is loaded in init()
+process.on('exit', () => { if (!useDb) flush(); });
 
-module.exports = { track, summary, tonightDeaths, flush, reset, setEnabled, _events: () => events };
+module.exports = { init, track, summary, tonightDeaths, flush, reset, setEnabled, _events: () => events };
