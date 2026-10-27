@@ -56,7 +56,7 @@
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}`);
     S.ws = ws;
-    ws.onopen = () => { S.connected = true; if (S.pendingJoin) { send(S.pendingJoin); S.pendingJoin = null; } };
+    ws.onopen = () => { S.connected = true; send({ t: 'visit', did: deviceId(), touch: 'ontouchstart' in window || navigator.maxTouchPoints > 0, first: S.firstVisit }); if (S.pendingJoin) { send(S.pendingJoin); S.pendingJoin = null; } };
     ws.onclose = () => {
       S.connected = false;
       if (S.game) { toast('Connection lost. Returning to the lobby.'); leaveGameUI(); }
@@ -64,16 +64,59 @@
     };
     ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } onMessage(m); };
   }
+  // Anonymous, random per-device id for gameplay analytics (never a name).
+  function deviceId() {
+    if (S.did) return S.did;
+    let d = null;
+    try { d = localStorage.getItem('nf-did'); } catch (e) { /* storage blocked */ }
+    S.firstVisit = !d;
+    if (!d) { d = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => (b % 36).toString(36)).join(''); try { localStorage.setItem('nf-did', d); } catch (e) { /* ignore */ } }
+    return (S.did = d);
+  }
+  // ---- haptics: short vibrations on phones. Android uses the Vibration API.
+  // iPhone has none; on iOS 18+ Safari, toggling a hidden "switch" checkbox
+  // plays a light system tick, used here as a best-effort fallback.
+  const Haptics = (() => {
+    const canVibrate = typeof navigator.vibrate === 'function';
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    let sw = null;
+    function iosTick() {
+      if (!sw) {
+        sw = document.createElement('label');
+        sw.setAttribute('aria-hidden', 'true');
+        sw.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+        const inp = document.createElement('input'); inp.type = 'checkbox'; inp.setAttribute('switch', ''); inp.tabIndex = -1;
+        sw.appendChild(inp); document.body.appendChild(sw);
+      }
+      sw.click();
+    }
+    function play(pattern) {
+      if (S.muted || !S.touch) return;
+      S.lastHaptic = pattern; // for checks
+      if (canVibrate) { try { navigator.vibrate(pattern); } catch (e) { /* ignore */ } return; }
+      if (isIOS) { const pulses = Array.isArray(pattern) ? Math.ceil(pattern.length / 2) : 1; for (let i = 0; i < Math.min(3, pulses); i++) setTimeout(iosTick, i * 130); }
+    }
+    return {
+      closeCall: (streak) => play(streak >= 3 ? [25, 50, 25, 50, 40] : [25]),
+      scare: () => play([140, 40, 220]),
+      pickup: () => play([18]),
+      revived: () => play([30, 60, 30]),
+      flare: () => play([20, 40, 60]),
+      event: (type) => play({ slam: [100, 40, 100], hunt: [60, 160, 60, 160, 60, 160, 60], blackout: [40, 60, 180] }[type] || [40]),
+      heartbeat: (danger) => play(danger > 0.8 ? [40, 110, 30] : [22, 120, 16]),
+    };
+  })();
+
   function send(m) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(m)); }
 
   function onMessage(m) {
     switch (m.t) {
       case 'hello': S.id = m.id; S.levels = m.levels; S.itemsMeta = m.items; S.survivors = m.survivors || []; renderScores($('#scores-table tbody'), m.scores); renderTonight(m.tonight); renderRooms(m.rooms); break;
       case 'rooms': renderRooms(m.rooms); break;
-      case 'joined': S.profile = m.profile; Audio.startMusic(); $('#room-code-display').textContent = m.code; $('#join-panel').classList.add('hidden'); $('#room-panel').classList.remove('hidden'); $('#scores-panel').classList.add('full'); break;
+      case 'joined': if (m.secret) saveSecret(m.name, m.secret); else if ($('#recovery').value.trim()) saveSecret(m.name, $('#recovery').value.trim().toUpperCase()); $('#recovery').value = ''; $('#recovery-row').classList.add('hidden'); S.myName = m.name; $('#my-name').textContent = m.name; $('#my-code').classList.add('hidden'); $('#btn-copy-code').classList.add('hidden'); S.profile = m.profile; Audio.startMusic(); $('#room-code-display').textContent = m.code; $('#join-panel').classList.add('hidden'); $('#room-panel').classList.remove('hidden'); $('#scores-panel').classList.add('full'); break;
       case 'room': S.room = m; renderRoom(); break;
       case 'left': S.room = null; $('#room-panel').classList.add('hidden'); $('#join-panel').classList.remove('hidden'); $('#scores-panel').classList.remove('full'); renderRooms(m.rooms); renderTonight(m.tonight); break;
-      case 'error': toast(m.msg); break;
+      case 'error': toast(m.msg); if (m.code === 'name_taken') { $('#recovery-row').classList.remove('hidden'); $('#recovery').focus(); } break;
       case 'scores': renderScores($('#scores-table tbody'), m.scores); break;
       case 'start': startGame(m); break;
       case 'state': onState(m); break;
@@ -198,12 +241,24 @@
     $('#host-note').textContent = isHost ? 'You are the host. Pick the night and begin when everyone is here.' : 'Waiting for the host to begin the night…';
   }
 
-  $('#name').value = localStorage.getItem('nf-name') || '';
+  // ---- name protection: this device keeps the recovery code for each name it owns
+  const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } };
+  const normName = (n) => String(n || '').trim().toLowerCase();
+  function secrets() { try { return JSON.parse(lsGet('nf-secrets', '{}')) || {}; } catch (e) { return {}; } }
+  function saveSecret(name, code) { const s = secrets(); s[normName(name)] = code; lsSet('nf-secrets', JSON.stringify(s)); }
+  // a unique default name per device, instead of everyone sharing "Stranger"
+  let anon = lsGet('nf-anon', '');
+  if (!anon) { anon = `Stranger-${Math.floor(1000 + Math.random() * 9000)}`; lsSet('nf-anon', anon); }
+  $('#name').placeholder = anon;
+  $('#name').value = lsGet('nf-name', '');
+  $('#btn-have-code').onclick = () => { $('#recovery-row').classList.remove('hidden'); $('#recovery').focus(); };
   function doJoin(room) {
-    const name = $('#name').value.trim() || 'Stranger';
-    localStorage.setItem('nf-name', name);
+    const name = $('#name').value.trim() || anon;
+    lsSet('nf-name', $('#name').value.trim());
     Audio.init(); Audio.resume();
-    const msg = { t: 'join', name, room: room || undefined };
+    const typed = $('#recovery').value.trim();
+    const msg = { t: 'join', did: deviceId(), name, room: room || undefined, secret: typed || secrets()[normName(name)] || undefined };
     if (S.connected) send(msg); else S.pendingJoin = msg;
   }
   $('#btn-create').onclick = () => doJoin();
@@ -211,6 +266,12 @@
   $('#room-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-join').click(); });
   $('#name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-create').click(); });
   $('#btn-leave').onclick = () => send({ t: 'leave' });
+  $('#btn-show-code').onclick = () => {
+    const code = secrets()[normName(S.myName)];
+    const el = $('#my-code'); el.textContent = code || 'Not stored on this device'; el.classList.remove('hidden');
+    $('#btn-copy-code').classList.toggle('hidden', !code);
+  };
+  $('#btn-copy-code').onclick = () => { const code = secrets()[normName(S.myName)]; if (code) copyText(code, 'Recovery code'); };
   $('#chk-public').onchange = (e) => send({ t: 'setPublic', public: e.target.checked });
   function inviteLink() { return `${location.origin}${location.pathname}?room=${S.room ? S.room.code : ''}`; }
   async function copyText(text, label) {
@@ -241,12 +302,14 @@
     $('#intro-roster').textContent = `Tonight: ${init.monsters.join(', ')}. ${init.keys} locked door${init.keys > 1 ? 's' : ''}, ${init.fragments} rune fragments.`;
     $('#intro-warm').textContent = '';
     const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    S.touch = touch; S.hbNext = 0;
     $('#touch').classList.toggle('hidden', !touch);
     $('#game').classList.toggle('is-touch', touch);
     $('#intro-controls').innerHTML = touch
       ? '<span>Move with the stick</span><span>A glowing button appears when you can act: tap it</span>'
       : '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows: move</span><span><kbd>E</kbd> act when the button glows</span><span><kbd>B</kbd> brightness</span><span><kbd>M</kbd> mute</span>';
     S.explored = new Uint8Array(init.W * init.H); S.action = null; S.actionSig = '';
+    tutorialReset();
     $('#hud-action').classList.add('hidden');
     resize();
     Audio.init(); Audio.resume();
@@ -306,24 +369,24 @@
   function playCinematic(standalone) {
     const box = $('#cinematic'), v = $('#cinematic-video'), loading = $('#cinematic-loading'), tap = $('#btn-play-intro');
     let done = false, started = false;
-    const finish = () => {
+    const finish = (how) => {
       if (done) return; done = true;
       try { v.pause(); } catch (e) { /* ignore */ }
       box.classList.add('hidden'); loading.classList.add('hidden'); tap.classList.add('hidden');
       clearTimeout(playCinematic.w);
       v.onended = v.onerror = v.onwaiting = v.onplaying = null;
       if (standalone) { Audio.startMusic(); return; }
-      send({ t: 'ready' });
+      send({ t: 'ready', how: how === 'ended' ? 'ended' : 'skipped', secs: Math.round(v.currentTime || 0) });
       if (S.game) { $('#intro').classList.remove('hidden'); Audio.startMusic(); }
     };
     box.classList.remove('hidden'); tap.classList.add('hidden');
     loading.classList.toggle('hidden', v.readyState >= 3);
     try { v.currentTime = 0; } catch (e) { /* not loaded yet */ }
     v.muted = S.muted; v.volume = 0.9;
-    v.onended = finish; v.onerror = finish;
+    v.onended = () => finish('ended'); v.onerror = () => finish('error');
     v.onwaiting = () => loading.classList.remove('hidden');
     v.onplaying = () => { started = true; loading.classList.add('hidden'); tap.classList.add('hidden'); };
-    $('#btn-skip').onclick = finish;
+    $('#btn-skip').onclick = () => finish('skipped');
     // If playback has not started shortly, or the browser refused, offer a real tap.
     const offerTap = () => { if (done || started) return; loading.classList.add('hidden'); tap.classList.remove('hidden'); };
     tap.onclick = () => { v.muted = S.muted; const p2 = v.play(); if (p2 && p2.catch) p2.catch(() => { v.muted = true; v.play().catch(finish); }); tap.classList.add('hidden'); };
@@ -411,12 +474,12 @@
   function onEvent(e) {
     const mine = e.target === S.id || e.byId === S.id || e.whoId === S.id;
     switch (e.kind) {
-      case 'key': addLog(`${e.by} found the ${KEY_NAMES[e.keyId] || ''} key.`, 'good'); Audio.pickup('key'); floater(e.x, e.y, 'KEY', KEY_COLORS[e.keyId]); break;
-      case 'fragment': addLog(`${e.by} found a rune fragment: ${e.rune} — the ${ordinal(e.order)} mark.`, 'good'); Audio.pickup('fragment'); floater(e.x, e.y, e.rune, '#ffd98a'); break;
+      case 'key': addLog(`${e.by} found the ${KEY_NAMES[e.keyId] || ''} key.`, 'good'); Audio.pickup('key'); if (e.by === S.myName) Haptics.pickup(); floater(e.x, e.y, 'KEY', KEY_COLORS[e.keyId]); break;
+      case 'fragment': addLog(`${e.by} found a rune fragment: ${e.rune} — the ${ordinal(e.order)} mark.`, 'good'); Audio.pickup('fragment'); if (e.by === S.myName) Haptics.pickup(); floater(e.x, e.y, e.rune, '#ffd98a'); break;
       case 'door': addLog(e.skeleton ? `${e.by} forced a door with the Skeleton Key.` : `${e.by} unlocked the ${KEY_NAMES[e.keyId] || ''} door.`); Audio.door({ x: e.x + 0.5, y: e.y + 0.5 }); break;
       case 'item': addLog(`${e.by} found a relic: ${e.itemName || e.item}. ${e.itemDesc || ''}`, 'relic'); Audio.pickup('item'); break;
       case 'caught': addLog(`${e.who} was taken by a ${e.type}!`, 'bad'); Audio.caught(); if (mine) shake(900); break;
-      case 'revive': addLog(`${e.by} pulled ${e.who} back from the dark.`, 'good'); Audio.pickup('fragment'); break;
+      case 'revive': addLog(`${e.by} pulled ${e.who} back from the dark.`, 'good'); Audio.pickup('fragment'); if (e.who === S.myName) Haptics.revived(); break;
       case 'wrong': addLog(`The altar rejects ${e.by}'s offering. ${e.penalty} seconds lost. Something stirs…`, 'bad'); Audio.wrong(); if (mine) { S.puzzleSeq = []; renderPuzzle(); } break;
       case 'exitOpen': addLog(`${e.by} read the altar. The exit is open. RUN.`, 'good'); Audio.bell(3); $('#puzzle').classList.add('hidden'); break;
       case 'escaped': addLog(`${e.by} escaped into the night.`, 'good'); break;
@@ -425,9 +488,9 @@
       case 'cry': Audio.monster(e.type, { x: e.x, y: e.y }, { dash: e.dash, roar: e.roar }); break;
       case 'phantom': if (e.target === S.id) Audio.phantom(e.type, { x: e.x, y: e.y }); break;
       case 'scare': if (e.target === S.id) jumpScare(e.reason, e.type); break;
-      case 'closeCall': if (mine) { Audio.closeCall(e.streak); floater(e.x, e.y, `CLOSE CALL +${e.pts}`, '#ffd98a'); if (e.streak >= 3) floater(e.x, e.y + 0.8, `×${e.streak} STREAK`, '#f28c28'); } break;
+      case 'closeCall': if (mine) { Audio.closeCall(e.streak); Haptics.closeCall(e.streak); floater(e.x, e.y, `CLOSE CALL +${e.pts}`, '#ffd98a'); if (e.streak >= 3) floater(e.x, e.y + 0.8, `×${e.streak} STREAK`, '#f28c28'); } break;
       case 'hint': if (e.target === S.id) { Audio.hintWhisper(); addLog({ key: 'a whisper points the way to a key', fragment: 'a whisper points the way to a rune fragment', altar: 'a whisper calls you to the altar', exit: 'a whisper pulls you toward the exit' }[e.what] || 'a whisper points the way'); } break;
-      case 'flare': addLog(`${e.by} lit a flare from beyond.`, 'relic'); Audio.flare({ x: e.x, y: e.y }); break;
+      case 'flare': addLog(`${e.by} lit a flare from beyond.`, 'relic'); Audio.flare({ x: e.x, y: e.y }); if (e.by === S.myName) Haptics.flare(); break;
       case 'eventStart': showEvent(e); break;
       case 'eventEnd': $('#game').classList.remove('hunt', 'blackout'); if (e.type === 'blackout') addLog('The lamps flicker back to life.'); if (e.type === 'hunt') addLog('The bell falls silent. They slow again.'); break;
       case 'unslam': addLog('The slammed door creaks open again.'); Audio.door({ x: e.x + 0.5, y: e.y + 0.5 }); break;
@@ -443,7 +506,7 @@
     el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
     clearTimeout(showEvent.t); showEvent.t = setTimeout(() => el.classList.add('hidden'), 4000);
     $('#game').classList.remove('hunt', 'blackout'); if (e.type !== 'slam') $('#game').classList.add(e.type);
-    Audio.eventSound(e.type); shake(e.type === 'slam' ? 500 : 250);
+    Audio.eventSound(e.type); Haptics.event(e.type); shake(e.type === 'slam' ? 500 : 250);
     addLog(text[0].charAt(0) + text[0].slice(1).toLowerCase() + '. ' + text[1].charAt(0).toUpperCase() + text[1].slice(1) + '.', 'bad');
   }
   function ordinal(n) { return ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth'][n] || `${n}th`; }
@@ -483,6 +546,7 @@
     $('#intro-warm').textContent = s.waitFor > 0 ? `Waiting for ${s.waitFor} ${s.waitFor === 1 ? 'soul' : 'souls'} to finish the intro` : s.warm > 0 ? `The night begins in ${s.warm}` : 'The night has begun';
     S.nearAltar = !!(m && !m.down && !m.esc && remaining === 0 && !s.solved && Math.hypot(m.x - g.altar.x - 0.5, m.y - g.altar.y - 0.5) < 1.6);
     updateAction(m, s, g, remaining);
+    tutorialTick(m, s, g);
     $('#hud-score-val').textContent = (s.score || 0).toLocaleString();
     const st = $('#hud-streak'); st.classList.toggle('hidden', !(m && m.st >= 2)); if (m && m.st >= 2) st.textContent = `close-call streak ×${m.st}`;
   }
@@ -756,6 +820,7 @@
       for (const p of snap.players) { if (p.esc) continue; const d = S.disp.get(p.id); if (d) drawPlayer(p, d.x * s, d.y * s, s, time, d); }
       // compass: a faint needle toward the nearest objective when the team has stalled
       if (m && m.hint && md && !m.esc) drawCompass(md.x * s, md.y * s, s, m.hint[0], m.hint[1], time);
+      else if (S.tut && S.tut.arrow && md && m && !m.esc && !m.down) drawCompass(md.x * s, md.y * s, s, S.tut.arrow.a, S.tut.arrow.kind, time);
       // floaters
       for (const f of S.floaters) { f.t += dt; ctx.globalAlpha = Math.max(0, 1 - f.t / 1.4); ctx.fillStyle = f.color; ctx.font = `bold ${Math.round(s * 0.7)}px Georgia`; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x * s, f.y * s - f.t * s * 1.2); ctx.globalAlpha = 1; }
       S.floaters = S.floaters.filter((f) => f.t < 1.4);
@@ -771,6 +836,9 @@
         let nearest = null;
         if (m && !m.down && !m.esc) for (const mo of snap.monsters) { const dd = Math.hypot(mo.x - md.x, mo.y - md.y); if (!mo.q && (nearest === null || dd < nearest)) nearest = dd; }
         Audio.tick(nearest);
+        // felt heartbeat when something is very close (danger 0.55+ is about 4 tiles)
+        const danger = nearest === null ? 0 : Math.max(0, 1 - nearest / 9);
+        if (danger > 0.55 && performance.now() > S.hbNext) { S.hbNext = performance.now() + (1.1 - danger * 0.65) * 1000; Haptics.heartbeat(danger); }
       }
       // down overlay
       if (m && m.down) { ctx.fillStyle = `rgba(60,40,110,${0.18 + 0.06 * Math.sin(time * 2)})`; ctx.fillRect(0, 0, W, H); }
@@ -786,6 +854,105 @@
     ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(255,180,80,.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, s * (1 + (time * 2 % 1) * 3), 0, 7); ctx.stroke();
     ctx.restore();
   }
+  // ============================================================ first-night tutorial
+  // Shown until a device has escaped a night once (or skipped the tips). Each
+  // step waits for the player to do the thing, with an arrow along the
+  // corridors for the first rune, the first key, the altar and the exit.
+  const TUT_KEY = 'nf-tut';
+  function tutStore() { try { return JSON.parse(localStorage.getItem(TUT_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function tutSave(v) { try { localStorage.setItem(TUT_KEY, JSON.stringify(v)); } catch (e) { /* storage blocked */ } }
+  function tutorialReset() {
+    const st = tutStore();
+    S.tut = st.finished || st.skipped ? null : { seen: new Set(st.seen || []), step: null, start: null, flashUntil: 0, monsterShown: !!(st.seen || []).includes('monster'), pathAt: 0, arrow: null };
+    $('#coach').classList.add('hidden');
+  }
+  function tutComplete(step) {
+    const t = S.tut; if (!t || t.seen.has(step)) return;
+    t.seen.add(step);
+    const st = tutStore(); st.seen = [...t.seen]; tutSave(st);
+    send({ t: 'tut', step });
+  }
+  function tutText(step, s, g) {
+    const touch = $('#game').classList.contains('is-touch');
+    switch (step) {
+      case 'move': return touch ? '<b>Drag the stick</b> at the bottom left to move.' : 'Move with <b>W A S D</b> or the <b>arrow keys</b>.';
+      case 'rune': return 'Rune fragments glow <b>purple</b> in the dark. <b>Follow the arrow</b> and walk over one to pick it up.';
+      case 'key': return 'Locked doors need the <b>key of the same colour</b>. Follow the arrow to a key, then walk into its door.';
+      case 'collect': return `Find <b>every rune fragment</b> (${s.got.length}/${g.fragments}). The <b>map</b> in the corner remembers where you have been. Lost? Stand still and a whisper will point the way.`;
+      case 'altar': return `All runes found! Follow the arrow to the <b>altar</b>. When you are close, <b>the glowing button</b> lets you read it. ${touch ? 'Tap it.' : 'Press <b>E</b> or click it.'}`;
+      case 'exit': return 'The gate is open. <b>Run!</b> Follow the arrow out.';
+      default: return '';
+    }
+  }
+  // corridor-following bearing toward the nearest target of a kind (client-side BFS over known tiles)
+  function tutPath(m, s, g, targets) {
+    if (!targets.length) return null;
+    const W = g.W, H = g.H, want = new Map(targets.map((t) => [Math.floor(t.y) * W + Math.floor(t.x), t]));
+    const prev = new Int32Array(W * H).fill(-1), start = Math.floor(m.y) * W + Math.floor(m.x);
+    prev[start] = start; const q = [start]; let found = -1;
+    const owned = new Set(s.owned), open = new Set(s.doors);
+    for (let i = 0; i < q.length && found < 0; i++) {
+      const c = q[i]; if (want.has(c) && c !== start) { found = c; break; }
+      const x = c % W, y = (c - x) / W;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const n = ny * W + nx; if (prev[n] !== -1) continue;
+        const t = g.tilesArr[n];
+        if (t === T.WALL) continue;
+        if (t === T.EXIT && !s.exitOpen) continue;
+        if (t === T.DOOR) { const d = g.doorMap.get(n); if (d && !open.has(d.keyId) && !owned.has(d.keyId)) continue; if (d && s.slam === d.keyId) continue; }
+        prev[n] = c; q.push(n);
+      }
+    }
+    if (found < 0) return null;
+    const path = []; for (let c = found; c !== start; c = prev[c]) path.push(c);
+    path.reverse();
+    const wp = path[Math.min(path.length - 1, 3)];
+    return { a: Math.atan2(Math.floor(wp / W) + 0.5 - m.y, (wp % W) + 0.5 - m.x), kind: want.get(found).kind };
+  }
+  function tutorialTick(m, s, g) {
+    const t = S.tut, el = $('#coach');
+    if (!t || !m || s.warm > 0 || !$('#intro').classList.contains('hidden')) { el.classList.add('hidden'); if (t) t.arrow = null; return; }
+    if (!t.start) t.start = { x: m.x, y: m.y };
+    // complete steps from what happened in the night
+    if (Math.hypot(m.x - t.start.x, m.y - t.start.y) > 2) tutComplete('move');
+    if (s.got.length > 0) tutComplete('rune');
+    if (s.owned.length > 0 || g.keys === 0) tutComplete('key');
+    if (s.got.length === g.fragments) tutComplete('collect');
+    if (s.solved) tutComplete('altar');
+    if (m.esc) { tutComplete('exit'); const st = tutStore(); if (!st.finished) { st.finished = true; tutSave(st); send({ t: 'tut', step: 'done' }); } }
+    // a one-off warning the first time a monster comes into view
+    const now = performance.now();
+    if (!t.monsterShown && s.monsters.some((mo) => mo.v)) { t.monsterShown = true; t.flashUntil = now + 7000; tutComplete('monster'); }
+    if (now < t.flashUntil) {
+      el.classList.remove('hidden'); el.classList.add('flash');
+      $('#coach-step').textContent = 'Danger'; $('#coach-text').innerHTML = 'Monsters <b>cannot be fought</b>. They move in straight lines: <b>get out of their lane</b> and keep moving. If they catch everyone, the night is lost.';
+      t.arrow = null; return;
+    }
+    el.classList.remove('flash');
+    // current step = first one not yet done, in order
+    const order = ['move', 'rune', 'key', 'collect', 'altar', 'exit'];
+    const step = m.down || m.esc ? null : order.find((k) => !t.seen.has(k));
+    if (!step) { el.classList.add('hidden'); t.arrow = null; return; }
+    if (step !== t.step) { t.step = step; t.pathAt = 0; }
+    el.classList.remove('hidden');
+    $('#coach-step').textContent = `Tip ${order.indexOf(step) + 1} of ${order.length}`;
+    const html = tutText(step, s, g); if ($('#coach-text').innerHTML !== html) $('#coach-text').innerHTML = html;
+    if (now - t.pathAt > 400) {
+      t.pathAt = now;
+      const targets = step === 'rune' ? s.frags.map((f) => ({ x: f.x, y: f.y, kind: 'fragment' }))
+        : step === 'key' ? s.keys.map((k) => ({ x: k.x, y: k.y, kind: 'key' }))
+        : step === 'altar' ? [{ x: g.altar.x + 0.5, y: g.altar.y + 0.5, kind: 'altar' }]
+        : step === 'exit' ? [{ x: g.exit.x + 0.5, y: g.exit.y + 0.5, kind: 'exit' }] : [];
+      t.arrow = tutPath(m, s, g, targets);
+    }
+  }
+  $('#coach-skip').onclick = () => {
+    const st = tutStore(); st.skipped = true; tutSave(st);
+    send({ t: 'tut', step: S.tut && S.tut.step ? S.tut.step : 'move', skipped: true });
+    S.tut = null; $('#coach').classList.add('hidden');
+  };
+
   function drawCompass(x, y, s, angle, kind, time) {
     const u = Math.max(s, 22); // keep the needle readable on tiny tiles
     const r = u * 1.3 + Math.sin(time * 4) * u * 0.1, pulse = 0.65 + 0.3 * Math.sin(time * 4);
@@ -1006,7 +1173,7 @@
       x.fillStyle = 'rgba(160,0,0,.18)'; x.fillRect(0, 0, c.width, c.height);
     } else drawScareFace(c.getContext('2d'), c.width, c.height, type);
     el.classList.remove('hidden'); shake(700); Audio.scream();
-    if (navigator.vibrate) navigator.vibrate([120, 40, 200]);
+    Haptics.scare();
     clearTimeout(jumpScare.t);
     jumpScare.t = setTimeout(() => { el.classList.add('hidden'); $('#game').classList.add('redflash'); setTimeout(() => $('#game').classList.remove('redflash'), 650); }, 550 + Math.random() * 250);
   }
@@ -1039,5 +1206,5 @@
   }
 
   connect();
-  if (location.hash === '#debug') window.__nf = { showEvent, jumpScare, updateAction, setBrightness, me: () => me(), state: () => S }; // visual checks only
+  if (location.hash === '#debug') window.__nf = { showEvent, jumpScare, updateAction, setBrightness, Haptics, me: () => me(), state: () => S }; // visual checks only
 })();

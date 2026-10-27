@@ -29,6 +29,8 @@
       <div class="panel" id="join-panel">
         <h2>Enter the night</h2>
         <label>Your name<input id="name" maxlength="16" placeholder="Stranger" autocomplete="off"></label>
+        <button id="btn-have-code" class="linkish" type="button">Playing on a new device? Use your recovery code</button>
+        <label id="recovery-row" class="hidden">Recovery code<input id="recovery" maxlength="24" placeholder="NF-XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="text-transform:uppercase"></label>
         <div class="row">
           <button id="btn-create" class="primary">Create room</button>
         </div>
@@ -52,6 +54,9 @@
             <div id="survivor-pick" class="survivors"></div>
             <h3>Your relics</h3>
             <ul id="relic-list" class="relics"></ul>
+            <h3>Your name is protected</h3>
+            <p class="hint small">Only this device can play as <b id="my-name"></b>. To play on another device, use your recovery code.</p>
+            <div class="row"><button id="btn-show-code" class="ghost-btn small" type="button">Show recovery code</button><code id="my-code" class="recovery hidden"></code><button id="btn-copy-code" class="ghost-btn small hidden" type="button">Copy</button></div>
           </div>
           <div>
             <h3>Choose the night</h3>
@@ -98,13 +103,14 @@
       <div id="hud-players" class="hud-players"></div>
       <div id="hud-objective" class="hud-objective"></div>
       <div id="hud-log" class="hud-log"></div>
+      <div id="coach" class="coach hidden"><div class="coach-head"><span id="coach-step"></span><button id="coach-skip" class="linkish" type="button">Skip tips</button></div><div id="coach-text"></div></div>
       <canvas id="minimap" class="minimap" width="200" height="160" title="Map of what your team has seen"></canvas>
       <button id="hud-action" class="hud-action hidden" type="button"><span class="key">E</span><span class="ic"></span><span class="txt"><span class="label"></span><span class="sub"></span></span><span class="bar"></span></button>
       <div id="hud-escape" class="hud-escape hidden"></div>
       <div id="hud-event" class="hud-event hidden"></div>
       <div id="hud-score" class="hud-score"><span id="hud-score-val">0</span><span id="hud-streak" class="streak hidden"></span></div>
       <button id="btn-bright" class="icon-btn bright-btn" title="Brightness (B)">☀</button>
-      <button id="btn-mute" class="icon-btn" title="Mute (M)">🔊</button>
+      <button id="btn-mute" class="icon-btn" title="Mute sound and vibration (M)">🔊</button>
     </div>
     <div id="touch" class="touch hidden">
       <div id="stick" class="stick"><div class="knob"></div></div>
