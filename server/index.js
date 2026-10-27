@@ -397,15 +397,27 @@ const hb = setInterval(() => {
   }
 }, 30000);
 
-server.listen(PORT, () => console.log(`Nightfall is listening on http://localhost:${PORT}`));
+const db = require('./db');
+(async () => {
+  if (process.env.DATABASE_URL) {
+    const ok = await db.init(process.env.DATABASE_URL);
+    if (!ok) console.error('[db] DATABASE_URL is set but the database is unreachable: running on local files this time. Data saved now will NOT reach the database.');
+  }
+  const mode = await store.init();
+  await analytics.init();
+  server.listen(PORT, () => console.log(`Nightfall is listening on http://localhost:${PORT} (storage: ${mode})`));
+})().catch((e) => { console.error('[startup] failed:', e); process.exit(1); });
 
-function shutdown() {
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return; shuttingDown = true;
   clearInterval(hb);
-  store.flushAll();
-  analytics.flush();
   for (const r of rooms.values()) r.stopLoop();
+  setTimeout(() => process.exit(0), 8000).unref(); // never hang the host's restart
+  try { await Promise.all([store.flushAll(), analytics.flush()]); } catch (e) { console.error('[shutdown] flush failed:', e.message); }
+  await db.close();
   server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 1500).unref();
+  setTimeout(() => process.exit(0), 500).unref();
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

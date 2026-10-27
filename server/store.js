@@ -3,8 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// Tiny JSON-file persistence for high scores and player profiles.
-// Writes are debounced and atomic (write temp file, then rename).
+// Persistence for high scores and player profiles. Data lives in memory;
+// writes are debounced to either JSON files (default, atomic rename) or a
+// Postgres database when DATABASE_URL is set (see db.js), so the data
+// survives the host restarting or redeploying.
+const db = require('./db');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 
@@ -24,6 +27,7 @@ class JsonStore {
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
+      if (this.db) return this.dbWrite();
       const tmp = this.file + '.tmp';
       try {
         fs.writeFileSync(tmp, JSON.stringify(this.data));
@@ -35,10 +39,28 @@ class JsonStore {
   }
   flush() {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    if (this.db) return this.dbWrite();
     try {
       fs.writeFileSync(this.file, JSON.stringify(this.data));
     } catch (e) { console.error('[store] flush failed:', e.message); }
+    return Promise.resolve();
   }
+  // database writes: the whole document for the score boards, or only the
+  // changed rows for profiles. A failed write is retried on the next save.
+  dbWrite() {
+    if (this.writing) { this.again = true; return this.writing; }
+    const job = this.db === 'kv' ? db.setKV(this.dbKey, this.data) : (() => {
+      const keys = [...this.dirty]; this.dirty.clear();
+      return db.upsertProfiles(keys.filter((k) => this.data.byName[k]).map((k) => [k, this.data.byName[k]])).catch((e) => { for (const k of keys) this.dirty.add(k); throw e; });
+    })();
+    this.writing = job.catch((e) => { console.error(`[store] database write failed (${this.dbKey || 'profiles'}), will retry:`, e.message); this.failed = true; })
+      .finally(() => {
+        this.writing = null;
+        if (this.again || this.failed) { const retry = this.failed; this.again = false; this.failed = false; setTimeout(() => this.save(), retry ? 5000 : 0); }
+      });
+    return this.writing;
+  }
+  touch(key) { if (this.db === 'rows') this.dirty.add(key); this.save(); }
 }
 
 const scores = new JsonStore('scores.json', { entries: [], daily: {} });
@@ -79,7 +101,7 @@ function getProfile(name) {
   const key = normName(name);
   if (!profiles.data.byName[key]) {
     profiles.data.byName[key] = { name: String(name).trim(), unlocked: 1, items: [], wins: 0, best: 0, survivor: 0 };
-    profiles.save();
+    profiles.touch(key);
   }
   return profiles.data.byName[key];
 }
@@ -107,7 +129,7 @@ function claimProfile(name, code) {
     const fresh = newRecoveryCode();
     p.salt = crypto.randomBytes(8).toString('hex');
     p.secretHash = hashCode(fresh, p.salt);
-    profiles.save();
+    profiles.touch(normName(name));
     return { ok: true, profile: p, code: fresh };
   }
   if (!code) return { ok: false, reason: 'taken' };
@@ -124,10 +146,28 @@ function publicProfile(p) {
 function updateProfile(name, fn) {
   const p = getProfile(name);
   fn(p);
-  profiles.save();
+  profiles.touch(normName(name));
   return p;
 }
 
-function flushAll() { scores.flush(); profiles.flush(); }
+function flushAll() { return Promise.all([scores.flush(), profiles.flush()]); }
 
-module.exports = { addScore, topScores, addDailyScore, topDaily, getProfile, updateProfile, flushAll, claimProfile, publicProfile, profileExists, normCode };
+// Switch to the database when it is connected: load everything into memory.
+// If the database is configured but unreachable we keep the files, and say so,
+// rather than starting empty and overwriting the real data later.
+async function init() {
+  if (!db.ready) return 'files';
+  const [board, rows] = await Promise.all([db.getKV('scores'), db.allProfiles()]);
+  let migrated = false;
+  if (board) scores.data = board;
+  else if (scores.data.entries.length || Object.keys(scores.data.daily || {}).length) migrated = true; // first run: move the file data up
+  if (Object.keys(rows).length) profiles.data.byName = rows;
+  else if (Object.keys(profiles.data.byName).length) migrated = true;
+  scores.db = 'kv'; scores.dbKey = 'scores';
+  profiles.db = 'rows'; profiles.dirty = new Set(rows && Object.keys(rows).length ? [] : Object.keys(profiles.data.byName));
+  if (migrated) { await Promise.all([scores.dbWrite(), profiles.dbWrite()]); console.log('[store] copied existing file data into the database'); }
+  console.log(`[store] using the database: ${Object.keys(profiles.data.byName).length} profiles, ${scores.data.entries.length} scores`);
+  return 'database';
+}
+
+module.exports = { init, addScore, topScores, addDailyScore, topDaily, getProfile, updateProfile, flushAll, claimProfile, publicProfile, profileExists, normCode };

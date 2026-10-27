@@ -136,10 +136,39 @@ Environment:
 | `PORT` | `3000` | HTTP + WebSocket port |
 | `DATA_DIR` | `./data` | where `scores.json`, `profiles.json` and `events.ndjson` live |
 | `ADMIN_TOKEN` | unset | enables the private stats page at `/admin/stats?token=<value>` |
+| `DATABASE_URL` | unset | Postgres connection string; when set, all data is kept in the database |
 
 Put it behind HTTPS (the client switches to `wss://` automatically). Rooms are
 in memory, so run one instance, or pin players to one instance with sticky
 sessions if you scale out.
+
+## Keeping data when the server restarts (free database)
+
+Render's free plan wipes the server's disk on every deploy and restart, so
+by default scores, protected names, relics and stats reset. Point the game
+at a free Postgres database and they survive:
+
+1. Create a free account at [neon.com](https://neon.com) (sign in with
+   GitHub) and create a project named `nightfall`. Pick the region closest to
+   your Render service (Render's default, Oregon, is AWS `us-west-2`).
+2. On the project dashboard click **Connect** and copy the connection string.
+   It looks like `postgresql://user:password@ep-....neon.tech/neondb?sslmode=require`.
+3. In Render, open the service, go to **Environment**, add `DATABASE_URL` with
+   that string, and save. Render redeploys.
+4. In the deploy log you should see `[db] connected, tables ready` and
+   `storage: database`.
+
+The server creates its tables on first start and copies any existing file
+data in. All data is held in memory while the server runs and written to the
+database within a few seconds of each change, and again on shutdown. If the
+database cannot be reached at startup, the server retries for about 30
+seconds, then runs on local files with a warning in the log, without ever
+overwriting the database. Analytics events older than 60 days are pruned to
+stay inside the free storage.
+
+Without `DATABASE_URL` everything stays in JSON files in `DATA_DIR`, which is
+the simplest setup for local development. Run the database tests with
+`TEST_DATABASE_URL=postgres://... npm run test:db`.
 
 ## Analytics
 
@@ -166,7 +195,9 @@ server/index.js    HTTP static server, WebSocket rooms, lobby, leaderboard
 server/game.js     authoritative simulation: players, monsters, doors, puzzle
 server/mapgen.js   procedural dungeon generator + solvability verifier
 server/levels.js   the eight nights, monster stats, relics
-server/store.js    JSON persistence (scores, profiles)
+server/store.js    scores and profiles in memory, saved to files or the database
+server/db.js       optional Postgres persistence (DATABASE_URL)
+server/analytics.js anonymous gameplay events and the stats summary
 public/client.js   rendering, fog of war, HUD, puzzle, scares, input
 public/audio.js    synthesized ambient score, voices, phantoms, stingers
 public/assets.js   optional external sprite/audio loader
